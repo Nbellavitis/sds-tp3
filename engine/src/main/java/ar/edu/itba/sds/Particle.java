@@ -110,7 +110,7 @@ public class Particle {
      * Contact when |r + v*t| = r0 + radius.
      *
      * Solve: (v·v)t^2 + 2(r·v)t + (r·r - sigma^2) = 0
-     * We want the SMALLEST POSITIVE root.
+     * We want the SMALLEST POSITIVE root (particle approaches obstacle from outside).
      */
     public double timeToObstacle(double obstacleRadius) {
         double sigma = obstacleRadius + this.radius;
@@ -118,21 +118,23 @@ public class Particle {
         double a = vx * vx + vy * vy;
         if (a < 1e-15) return Double.POSITIVE_INFINITY;
 
-        double b = x * vx + y * vy; // half of linear coefficient
+        double b = x * vx + y * vy; // half of linear coefficient (= r·v)
         double c = x * x + y * y - sigma * sigma;
 
-        // c > 0 means particle is outside the obstacle (normal)
-        // c < 0 would be overlap (shouldn't happen)
+        // c > 0 means particle center is outside contact distance (normal case)
+        // c <= 0 would be overlap or touching
         double disc = b * b - a * c;
-        if (disc < 0) return Double.POSITIVE_INFINITY;
+        if (disc < 0) return Double.POSITIVE_INFINITY; // trajectory misses obstacle
 
         double sqrtDisc = Math.sqrt(disc);
         double t1 = (-b - sqrtDisc) / a;
         double t2 = (-b + sqrtDisc) / a;
 
-        // Need the smallest positive root, and particle must be approaching (b < 0)
-        if (b >= 0) return Double.POSITIVE_INFINITY; // moving away from obstacle
-
+        // We want the smallest positive root.
+        // t1 <= t2 always. For a particle outside (c > 0):
+        //   - If both roots positive: t1 is the entry time
+        //   - If t1 < 0 < t2: particle starts inside (shouldn't happen)
+        // The particle must also be approaching: we check via positive root existence.
         if (t1 > 1e-12) return t1;
         if (t2 > 1e-12) return t2;
         return Double.POSITIVE_INFINITY;
@@ -195,10 +197,12 @@ public class Particle {
      * Specular reflection off the obstacle surface.
      * Normal vector points outward from obstacle: n = r/|r|
      * v' = v - 2*(v · n)*n
+     *
+     * Returns true if this was a FRESH -> USED transition (for C_fc counting).
      */
-    public void resolveObstacleCollision() {
+    public boolean resolveObstacleCollision() {
         double dist = Math.sqrt(x * x + y * y);
-        if (dist < 1e-15) return;
+        if (dist < 1e-15) return false;
 
         // Outward normal from obstacle (points away from origin toward particle)
         double nx = x / dist;
@@ -209,8 +213,11 @@ public class Particle {
         vy -= 2.0 * vn * ny;
 
         this.collisionCount++;
-        // Hitting obstacle -> becomes USED
-        this.state = State.USED;
+
+        // Only FRESH particles transition to USED (for C_fc counting)
+        boolean wasFresh = (this.state == State.FRESH);
+        this.state = State.USED; // Always USED after hitting obstacle
+        return wasFresh;
     }
 
     // ── Getters & Setters ────────────────────────────────────────────────

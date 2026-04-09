@@ -3,10 +3,14 @@ plot_scanning_rate.py - Inciso 1.2
 Generates: Scanning rate <J>(N) with error bars.
 
 The scanning rate J is obtained by linear interpolation of C_fc(t),
-the cumulative count of fresh particles that contact the central obstacle.
+the cumulative count of fresh particles that contacted the central obstacle.
 J = slope of the linear fit of C_fc(t).
 
+C_fc(t) is read from explicit 'E' event lines in the output file (exact timestamps),
+NOT from snapshot state diffing (which would miss fast F->U->F cycles).
+
 Usage:
+    python graphics/plot_scanning_rate.py
     python graphics/plot_scanning_rate.py data/
 """
 
@@ -18,9 +22,15 @@ from pathlib import Path
 
 
 def parse_simulation_file(filepath):
-    """Parse simulation file and return metadata + snapshots."""
+    """
+    Parse simulation file. Returns:
+        metadata: dict
+        snapshots: list of (time, particles)
+        events: list of (time, particle_id) for F->U transitions
+    """
     metadata = {}
     snapshots = []
+    events = []  # F->U transition events with exact times
     
     with open(filepath, 'r') as f:
         lines = f.readlines()
@@ -28,6 +38,7 @@ def parse_simulation_file(filepath):
     i = 0
     total = len(lines)
     
+    # Parse header/metadata
     while i < total and lines[i].startswith('#'):
         line = lines[i].strip().lstrip('# ')
         if 'N=' in line:
@@ -53,42 +64,69 @@ def parse_simulation_file(filepath):
                 if i >= total:
                     break
                 parts = lines[i].strip().split()
-                particles.append({
-                    'id': int(parts[0]),
-                    'x': float(parts[1]),
-                    'y': float(parts[2]),
-                    'vx': float(parts[3]),
-                    'vy': float(parts[4]),
-                    'state': parts[5]
-                })
+                if len(parts) >= 6:
+                    particles.append({
+                        'id': int(parts[0]),
+                        'x': float(parts[1]),
+                        'y': float(parts[2]),
+                        'vx': float(parts[3]),
+                        'vy': float(parts[4]),
+                        'state': parts[5]
+                    })
             snapshots.append((time, particles))
+        elif line.startswith('E '):
+            # Event line: E <time> <particle_id>
+            parts = line.split()
+            events.append((float(parts[1]), int(parts[2])))
         i += 1
     
-    return metadata, snapshots
+    return metadata, snapshots, events
 
 
-def compute_cfc(snapshots):
+def compute_cfc_from_events(events, t_final):
     """
-    Compute C_fc(t): cumulative count of fresh-to-center contacts.
-    
-    A "fresh contact with center" occurs when a particle transitions
-    from FRESH to USED state between consecutive snapshots.
+    Compute C_fc(t) from explicit F->U event lines.
     
     Returns:
-        times: array of snapshot times
-        cfc: cumulative count of fresh->used transitions
+        times: array of event times (including t=0 and t=t_final)
+        cfc: cumulative count at each time
+    """
+    # Sort events by time
+    events_sorted = sorted(events, key=lambda e: e[0])
+    
+    times = [0.0]
+    cfc = [0]
+    
+    count = 0
+    for t, pid in events_sorted:
+        count += 1
+        times.append(t)
+        cfc.append(count)
+    
+    # Add final point
+    if len(times) == 0 or times[-1] < t_final:
+        times.append(t_final)
+        cfc.append(count)
+    
+    return np.array(times), np.array(cfc)
+
+
+def compute_cfc_from_snapshots(snapshots):
+    """
+    Fallback: Compute C_fc(t) from snapshot state diffing.
+    Used when no 'E' event lines exist in the file.
+    
+    NOTE: This can MISS events where a particle goes F->U->F between snapshots.
     """
     times = []
     cfc_values = []
     cumulative = 0
-    
     prev_states = None
     
     for t, particles in snapshots:
         current_states = {p['id']: p['state'] for p in particles}
         
         if prev_states is not None:
-            # Count transitions F -> U (fresh particle hit the obstacle)
             for pid, state in current_states.items():
                 if pid in prev_states and prev_states[pid] == 'F' and state == 'U':
                     cumulative += 1
@@ -102,28 +140,24 @@ def compute_cfc(snapshots):
 
 def compute_scanning_rate(times, cfc):
     """
-    Compute scanning rate J as the slope of linear fit of C_fc(t).
-    Uses only the steady-state region (after transient).
+    Compute scanning rate J as the slope of the linear fit of C_fc(t).
+    The enunciado says: "interpolar linealmente C_fc(t), su pendiente será J".
+    We fit the ENTIRE curve (C_fc is cumulative so it should be roughly linear).
     
     Returns: J (slope), intercept, r_squared
     """
     if len(times) < 2:
         return 0.0, 0.0, 0.0
     
-    # Use the second half of the simulation for steady-state
-    mid = len(times) // 4
-    t_ss = times[mid:]
-    c_ss = cfc[mid:]
-    
-    # Linear fit
-    coeffs = np.polyfit(t_ss, c_ss, 1)
+    # Linear fit over the full time range
+    coeffs = np.polyfit(times, cfc, 1)
     J = coeffs[0]  # slope = scanning rate
     intercept = coeffs[1]
     
     # R-squared
-    c_pred = np.polyval(coeffs, t_ss)
-    ss_res = np.sum((c_ss - c_pred) ** 2)
-    ss_tot = np.sum((c_ss - np.mean(c_ss)) ** 2)
+    c_pred = np.polyval(coeffs, times)
+    ss_res = np.sum((cfc - c_pred) ** 2)
+    ss_tot = np.sum((cfc - np.mean(cfc)) ** 2)
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     
     return J, intercept, r_squared
@@ -132,15 +166,10 @@ def compute_scanning_rate(times, cfc):
 def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
     """
     Plot <J>(N) with error bars from multiple realizations.
-    
-    Args:
-        files_by_N: dict {N: [(filepath, metadata, snapshots), ...]}
-        output_dir: directory to save plots
     """
     os.makedirs(output_dir, exist_ok=True)
     
     if files_by_N is None:
-        # Try loading from data directory
         data_dir = "data"
         files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir)
                         if f.startswith('sim_') and f.endswith('.txt')])
@@ -151,11 +180,11 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
         
         files_by_N = {}
         for fpath in files:
-            meta, snaps = parse_simulation_file(fpath)
+            meta, snaps, events = parse_simulation_file(fpath)
             n = int(meta['N'])
             if n not in files_by_N:
                 files_by_N[n] = []
-            files_by_N[n].append((fpath, meta, snaps))
+            files_by_N[n].append((fpath, meta, snaps, events))
     
     N_values = sorted(files_by_N.keys())
     J_means = []
@@ -163,8 +192,16 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
     
     for N in N_values:
         J_list = []
-        for (fpath, meta, snaps) in files_by_N[N]:
-            times, cfc = compute_cfc(snaps)
+        for entry in files_by_N[N]:
+            fpath, meta, snaps, events = entry[0], entry[1], entry[2], entry[3] if len(entry) > 3 else []
+            t_final = float(meta.get('t_final', 5.0))
+            
+            # Use event lines if available, otherwise fall back to snapshot diffing
+            if events:
+                times, cfc = compute_cfc_from_events(events, t_final)
+            else:
+                times, cfc = compute_cfc_from_snapshots(snaps)
+            
             J, _, r2 = compute_scanning_rate(times, cfc)
             J_list.append(J)
         
@@ -179,11 +216,11 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
     ax.errorbar(N_values, J_means, yerr=J_stds, fmt='s-', capsize=5,
                 color='#9C27B0', ecolor='#CE93D8', markerfacecolor='#6A1B9A',
                 markeredgecolor='#4A148C', markersize=8, linewidth=2,
-                label='$\\langle J \\rangle \\pm \\sigma$')
+                label=r'$\langle J \rangle \pm \sigma$')
     
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel('Scanning rate $\\langle J \\rangle$ [contactos/s]', fontsize=14)
-    ax.set_title('Inciso 1.2: Scanning rate $\\langle J \\rangle$ vs $N$',
+    ax.set_ylabel(r'Scanning rate $\langle J \rangle$ [contactos/s]', fontsize=14)
+    ax.set_title(r'Inciso 1.2: Scanning rate $\langle J \rangle$ vs $N$',
                  fontsize=16, fontweight='bold')
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3, linestyle='--')
@@ -196,20 +233,29 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
     plt.close()
     print(f"  [1.2] Saved: {outpath}")
     
-    # ── Also plot C_fc(t) for the largest N as illustration ──────────────
+    # ── Also plot C_fc(t) for the largest N ──────────────────────────────
     max_N = max(N_values)
     fig2, ax2 = plt.subplots(figsize=(10, 7))
     
-    for fpath, meta, snaps in files_by_N[max_N]:
-        times, cfc = compute_cfc(snaps)
+    for entry in files_by_N[max_N]:
+        fpath, meta, snaps, events = entry[0], entry[1], entry[2], entry[3] if len(entry) > 3 else []
+        t_final = float(meta.get('t_final', 5.0))
+        
+        if events:
+            times, cfc = compute_cfc_from_events(events, t_final)
+        else:
+            times, cfc = compute_cfc_from_snapshots(snaps)
+        
         J, intercept, r2 = compute_scanning_rate(times, cfc)
         
         label_data = os.path.basename(fpath)
-        ax2.plot(times, cfc, alpha=0.6, linewidth=1.5, label=f'{label_data}')
+        ax2.step(times, cfc, where='post', alpha=0.7, linewidth=1.5,
+                 label=f'{label_data}')
         
-        # Plot linear fit
-        t_fit = np.linspace(times[0], times[-1], 100)
-        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.4, color='red')
+        # Linear fit line
+        t_fit = np.linspace(0, t_final, 100)
+        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.5, color='red',
+                 label=f'$J={J:.2f}$ contacts/s')
     
     ax2.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax2.set_ylabel('$C_{fc}(t)$ [contactos acumulados]', fontsize=14)

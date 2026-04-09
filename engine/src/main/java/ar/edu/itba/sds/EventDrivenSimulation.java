@@ -190,8 +190,13 @@ public class EventDrivenSimulation {
                     }
                     case PARTICLE_OBSTACLE -> {
                         Particle a = event.getA();
-                        a.resolveObstacleCollision(); // sets state to USED
+                        boolean wasFreshToUsed = a.resolveObstacleCollision();
                         totalCollisions++;
+
+                        // Log F->U transition for C_fc counting
+                        if (wasFreshToUsed) {
+                            writer.printf("E %.6e %d%n", currentTime, a.getId());
+                        }
 
                         int ia = findIndex(a);
                         predictEvents(ia);

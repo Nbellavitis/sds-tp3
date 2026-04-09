@@ -23,7 +23,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>ar.edu.itba.sds.tp3.EventDrivenSimulation</mainClass>
+                            <mainClass>ar.edu.itba.sds.EventDrivenSimulation</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
