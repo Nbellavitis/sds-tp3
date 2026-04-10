@@ -9,7 +9,6 @@ Per the enunciado:
 This script generates:
 1. F_u(t) vs t for each realization when a single file is provided
 2. F_u(t) vs t for all realizations of a given N
-3. A collapsed F_u(t) plot grouping realizations by N
 
 Usage:
     python graphics/plot_fraction_used.py data/sim_300N_20260409_235938_s42.txt
@@ -22,6 +21,7 @@ import glob
 import re
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 
@@ -115,17 +115,31 @@ def extract_fu_series(entry):
 
 def get_fraction_ylim(fu, fu_std=None):
     """
-    Pick a y-axis range that matches the actual scale of F_u(t).
+    Pick a y-axis range and tick spacing that avoid over-stretching
+    very small F_u(t) values.
     """
     upper = float(np.max(fu))
     if fu_std is not None:
         upper = max(upper, float(np.max(fu + fu_std)))
 
     if upper < 1e-12:
-        return 0.0, 0.05
+        return 0.0, 0.05, 0.01
 
-    margin = max(upper * 0.15, 0.01)
-    return 0.0, upper + margin
+    target_step = max(upper, 0.04) / 4.0
+    exponent = np.floor(np.log10(target_step))
+    normalized = target_step / (10 ** exponent)
+    if normalized <= 1.0:
+        step = 1.0
+    elif normalized <= 2.0:
+        step = 2.0
+    elif normalized <= 5.0:
+        step = 5.0
+    else:
+        step = 10.0
+    step *= 10 ** exponent
+
+    ymax = max(5.0 * step, np.ceil(upper / step) * step)
+    return 0.0, float(ymax), float(step)
 
 
 def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
@@ -161,9 +175,10 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
     ax.legend(fontsize=11, loc='upper left')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ymin, ymax = get_fraction_ylim(fu)
+    ymin, ymax, ystep = get_fraction_ylim(fu)
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(times[0], times[-1])
+    ax.yaxis.set_major_locator(MultipleLocator(ystep))
     
     plt.tight_layout()
     outpath = os.path.join(output_dir, f"inciso_1_3_fraction_used_N{N}.png")
@@ -208,9 +223,10 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
               borderaxespad=0.0)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ymin, ymax = get_fraction_ylim(np.array([0.0, max_fu]))
+    ymin, ymax, ystep = get_fraction_ylim(np.array([0.0, max_fu]))
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(0.0, t_max)
+    ax.yaxis.set_major_locator(MultipleLocator(ystep))
 
     plt.tight_layout(rect=(0, 0, 0.88, 1))
     outpath = os.path.join(output_dir, f"inciso_1_3_fraction_used_N{N}.png")
@@ -218,51 +234,6 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
     print(f"  [1.3] N={N}: gráfico con {n_runs} realizaciones superpuestas.")
-
-
-def plot_fraction_used_collapsed(files_by_N, output_dir="graphics/output"):
-    """
-    Plot all F_u(t) curves together, grouping realizations by N using color.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    N_values = sorted(files_by_N.keys())
-    colors = plt.cm.viridis(np.linspace(0, 1, max(len(N_values), 1)))
-    max_fu = 0.0
-    t_max = 0.0
-
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    for color, N in zip(colors, N_values):
-        first_for_N = True
-        for entry in files_by_N[N]:
-            times, fu = extract_fu_series(entry)
-            if len(times) == 0:
-                continue
-            max_fu = max(max_fu, float(np.max(fu)))
-            t_max = max(t_max, float(times[-1]))
-            label = f'$N={N}$' if first_for_N else None
-            ax.step(times, fu, where='post', color=color, alpha=0.45,
-                    linewidth=1.4, label=label)
-            first_for_N = False
-
-    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
-    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
-    ax.set_title('Inciso 1.3: $F_u(t)$ colapsado por $N$\n'
-                 'cada color agrupa todas las realizaciones de un mismo N',
-                 fontsize=16, fontweight='bold')
-    ax.legend(fontsize=11, loc='upper left')
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
-    ymin, ymax = get_fraction_ylim(np.array([0.0, max_fu]))
-    ax.set_ylim(ymin, ymax)
-    ax.set_xlim(0.0, t_max)
-
-    plt.tight_layout()
-    outpath = os.path.join(output_dir, "inciso_1_3_fraction_used_collapsed.png")
-    plt.savefig(outpath, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"  [1.3] Saved: {outpath}")
 
 
 if __name__ == '__main__':
@@ -281,12 +252,10 @@ if __name__ == '__main__':
             sys.exit(1)
         files_by_N = group_entries_by_N(entries)
         
-        # Plot F_u(t) realizations for each N and a collapsed summary across N.
+        # Plot F_u(t) realizations for each N.
         for N in sorted(files_by_N.keys()):
             plot_fraction_used_realizations(files_by_N[N])
-        if len(files_by_N) > 1:
-            plot_fraction_used_collapsed(files_by_N)
-        
+
     else:
         print(f"Error: '{path}' not found.")
         sys.exit(1)

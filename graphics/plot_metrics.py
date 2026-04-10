@@ -16,7 +16,6 @@ from plot_scanning_rate import plot_scanning_rate
 from plot_fraction_used import (
     plot_fraction_used,
     plot_fraction_used_realizations,
-    plot_fraction_used_collapsed,
 )
 from plot_radial_profiles import plot_radial_profiles, plot_radial_profiles_ensemble, plot_at_S2_vs_N
 
@@ -66,9 +65,7 @@ def main():
         print("\n=== Inciso 1.3: Fraction Used ===")
         for N in sorted(files_by_N.keys()):
             plot_fraction_used_realizations(files_by_N[N], output_dir)
-        if len(files_by_N) > 1:
-            plot_fraction_used_collapsed(files_by_N, output_dir)
-        
+
         # 1.4 - Radial profiles
         print("\n=== Inciso 1.4: Radial Profiles ===")
         for N in sorted(files_by_N.keys()):

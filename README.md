@@ -173,10 +173,8 @@ python graphics/plot_fraction_used.py data/                  # directorio
 ```
 
 - Muestra `F_u(t)` para todas las realizaciones de cada `N`, superpuestas en un mismo gráfico
-- Genera además una figura colapsada donde cada color agrupa las realizaciones del mismo `N`
 - **Genera:**
   - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — realizaciones de `F_u(t)` para cada `N`
-  - `graphics/output/inciso_1_3_fraction_used_collapsed.png` — todas las curvas agrupadas por `N`
 
 ---
 
