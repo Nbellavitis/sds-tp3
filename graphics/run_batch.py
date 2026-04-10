@@ -6,6 +6,9 @@ Generates the timing.txt file needed for Inciso 1.1.
 Usage:
     python graphics/run_batch.py
     python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5
+    python graphics/run_batch.py --n-start 50 --n-stop 500 --n-step 50 --runs 5
+    python graphics/run_batch.py --for-1-1 --runs 5
+    python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
     python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5 --t-final 8.0
 """
 
@@ -63,11 +66,39 @@ def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0):
     print(f"\nTiming data saved to: {timing_file}")
 
 
+def build_n_values(args):
+    """Resolve the list of N values from explicit values or a numeric range."""
+    if args.for_1_1:
+        if args.n_max < 50:
+            raise ValueError("--n-max must be at least 50 for --for-1-1")
+        return list(range(50, args.n_max + 1, 50))
+
+    if args.n_values is not None:
+        return args.n_values
+
+    if args.n_step <= 0:
+        raise ValueError("--n-step must be positive")
+    if args.n_stop < args.n_start:
+        raise ValueError("--n-stop must be greater than or equal to --n-start")
+
+    return list(range(args.n_start, args.n_stop + 1, args.n_step))
+
+
 def main():
     parser = argparse.ArgumentParser(description='Batch runner for simulations')
+    parser.add_argument('--for-1-1', action='store_true',
+                        help='Use the inciso 1.1 setup: N=50..Nmax with step 50 and t_f=5 s')
+    parser.add_argument('--n-max', type=int, default=500,
+                        help='Maximum N when using --for-1-1 (default: 500)')
     parser.add_argument('--n-values', nargs='+', type=int,
-                        default=[50, 100, 150, 200, 250, 300],
-                        help='N values to simulate')
+                        default=None,
+                        help='Explicit N values to simulate')
+    parser.add_argument('--n-start', type=int, default=50,
+                        help='Start of the N range when --n-values is not provided')
+    parser.add_argument('--n-stop', type=int, default=300,
+                        help='End of the N range when --n-values is not provided')
+    parser.add_argument('--n-step', type=int, default=50,
+                        help='Step of the N range when --n-values is not provided')
     parser.add_argument('--runs', type=int, default=5,
                         help='Number of runs per N value')
     parser.add_argument('--seed', type=int, default=42,
@@ -75,8 +106,9 @@ def main():
     parser.add_argument('--t-final', type=float, default=5.0,
                         help='Simulation final time t_f in seconds')
     args = parser.parse_args()
-    
-    run_batch(args.n_values, args.runs, args.seed, args.t_final)
+
+    t_final = 5.0 if args.for_1_1 else args.t_final
+    run_batch(build_n_values(args), args.runs, args.seed, t_final)
 
 
 if __name__ == '__main__':

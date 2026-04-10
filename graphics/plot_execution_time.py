@@ -18,6 +18,61 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+def fit_exponential_model(x, y):
+    """
+    Fit y = A * exp(b x) using linear regression on log(y).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    positive = y > 0
+    if np.count_nonzero(positive) < 2:
+        return None
+
+    log_y = np.log(y[positive])
+    coeffs = np.polyfit(x[positive], log_y, 1)
+    b = coeffs[0]
+    log_a = coeffs[1]
+    y_fit = np.exp(log_a + b * x)
+    ss_res = np.sum((log_y - (log_a + b * x[positive])) ** 2)
+    ss_tot = np.sum((log_y - np.mean(log_y)) ** 2)
+    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+    return {
+        "A": float(np.exp(log_a)),
+        "b": float(b),
+        "y_fit": y_fit,
+        "r_squared_log": float(r_squared),
+    }
+
+
+def fit_power_law_model(x, y):
+    """
+    Fit y = C * x^alpha using linear regression on log(x), log(y).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    positive = (x > 0) & (y > 0)
+    if np.count_nonzero(positive) < 2:
+        return None
+
+    log_x = np.log(x[positive])
+    log_y = np.log(y[positive])
+    coeffs = np.polyfit(log_x, log_y, 1)
+    alpha = coeffs[0]
+    log_c = coeffs[1]
+    y_fit = np.exp(log_c) * np.power(x, alpha)
+    ss_res = np.sum((log_y - (log_c + alpha * log_x)) ** 2)
+    ss_tot = np.sum((log_y - np.mean(log_y)) ** 2)
+    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+    return {
+        "C": float(np.exp(log_c)),
+        "alpha": float(alpha),
+        "y_fit": y_fit,
+        "r_squared_loglog": float(r_squared),
+    }
+
+
 def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.0):
     """
     Run simulations for various N values and measure execution time.
@@ -103,8 +158,11 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
         return
     
     N_values = sorted(times_by_N.keys())
-    means = [np.mean(times_by_N[n]) for n in N_values]
-    stds = [np.std(times_by_N[n]) for n in N_values]
+    means = np.array([np.mean(times_by_N[n]) for n in N_values], dtype=float)
+    stds = np.array([np.std(times_by_N[n]) for n in N_values], dtype=float)
+    N_array = np.array(N_values, dtype=float)
+    exp_fit = fit_exponential_model(N_array, means)
+    power_fit = fit_power_law_model(N_array, means)
     
     # ── Plot ──────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -113,27 +171,40 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
                 color='#2196F3', ecolor='#90CAF9', markerfacecolor='#1565C0',
                 markeredgecolor='#0D47A1', markersize=8, linewidth=2,
                 label='Tiempo medio ± σ')
-    
+    if exp_fit is not None:
+        ax.plot(N_array, exp_fit["y_fit"], '--', color='#D81B60', linewidth=2,
+                label=(r'Ajuste exp.: $T(N)\approx %.2f\,e^{%.4fN}$'
+                       % (exp_fit["A"], exp_fit["b"])))
+
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel('Tiempo de ejecución [ms]', fontsize=14)
+    ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=14)
+    ax.set_yscale('log')
     t_final = timing_metadata.get('t_final')
     if isinstance(t_final, (int, float)):
-        title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {t_final:g}$ s)'
+        if abs(float(t_final) - 5.0) > 1e-9:
+            print(f"  [1.1] WARNING: timing.txt was generated with t_f={t_final:g} s. "
+                  "La consigna de 1.1 pide t_f = 5 s.")
+            title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {t_final:g}$ s, fuera de consigna)'
+        else:
+            title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {t_final:g}$ s)'
     else:
         title = 'Inciso 1.1: Tiempo de ejecución vs $N$'
     ax.set_title(title, fontsize=16, fontweight='bold')
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    
-    # Use scientific notation on y-axis if values are large
-    ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
-    
     plt.tight_layout()
     outpath = os.path.join(output_dir, "inciso_1_1_execution_time.png")
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.1] Saved: {outpath}")
+
+    if exp_fit is not None:
+        print(f"  [1.1] Exponential fit: T(N) ≈ {exp_fit['A']:.3f} * exp({exp_fit['b']:.5f} N)"
+              f" with R²(log-space) = {exp_fit['r_squared_log']:.4f}")
+    if power_fit is not None:
+        print(f"  [1.1] Power-law fit: T(N) ≈ {power_fit['C']:.5f} * N^{power_fit['alpha']:.3f}"
+              f" with R²(log-log) = {power_fit['r_squared_loglog']:.4f}")
 
 
 if __name__ == '__main__':

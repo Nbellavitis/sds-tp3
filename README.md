@@ -91,6 +91,9 @@ java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 
 
 ```bash
 python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5
+python graphics/run_batch.py --n-start 50 --n-stop 500 --n-step 50 --runs 5
+python graphics/run_batch.py --for-1-1 --runs 5
+python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
 python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5 --t-final 8.0
 ```
 
@@ -134,11 +137,16 @@ python graphics/plot_metrics.py data/sim_300N_20260409_235938_s42.txt
 ### Inciso 1.1 — Tiempo de ejecución vs N
 
 ```bash
+python graphics/run_batch.py --for-1-1 --runs 5
+python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
 python graphics/plot_execution_time.py
 ```
 
 - **Requisito:** `data/timing.txt` (generado por `run_batch.py`)
-- El título del gráfico usa el `t_f` guardado en `timing.txt` si está disponible
+- La consigna de 1.1 usa `t_f = 5 s`
+- `--for-1-1` fija automáticamente `N = 50, 100, ..., Nmax` con paso `50` y `t_f = 5 s`
+- `--n-max` te deja elegir ese `N` máximo; por default vale `500`
+- El gráfico avisa si `timing.txt` fue generado con un `t_f` distinto de `5 s`
 - **Genera:** `graphics/output/inciso_1_1_execution_time.png`
 
 ---
