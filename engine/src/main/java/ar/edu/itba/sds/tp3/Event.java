@@ -1,7 +1,7 @@
-package ar.edu.itba.sds;
+package ar.edu.itba.sds.tp3;
 
 
-import ar.edu.itba.sds.*;
+import ar.edu.itba.sds.tp3.*;
 /**
  * Represents a future collision event in the Event-Driven Molecular Dynamics simulation.
  * 

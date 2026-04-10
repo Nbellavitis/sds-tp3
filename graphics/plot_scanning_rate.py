@@ -9,6 +9,9 @@ J = slope of the linear fit of C_fc(t).
 C_fc(t) is read from explicit 'E' event lines in the output file (exact timestamps),
 NOT from snapshot state diffing (which would miss fast F->U->F cycles).
 
+The expensive extraction is delegated to a Java cache builder; Python only
+loads the compact cached observables and plots them.
+
 Usage:
     python graphics/plot_scanning_rate.py
     python graphics/plot_scanning_rate.py data/
@@ -16,9 +19,12 @@ Usage:
 
 import sys
 import os
+import argparse
+import re
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
+
+from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 
 
 def parse_simulation_file(filepath):
@@ -163,28 +169,27 @@ def compute_scanning_rate(times, cfc):
     return J, intercept, r_squared
 
 
-def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
+def describe_run(fpath, run_index):
+    """Build a human-readable label for a realization."""
+    basename = os.path.basename(fpath)
+    seed_match = re.search(r'_s(\d+)\.txt$', basename)
+    if seed_match:
+        return f'Realizacion {run_index} (seed={seed_match.group(1)})'
+    return f'Realizacion {run_index}'
+
+
+def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/output"):
     """
     Plot <J>(N) with error bars from multiple realizations.
     """
     os.makedirs(output_dir, exist_ok=True)
     
     if files_by_N is None:
-        data_dir = "data"
-        files = sorted([os.path.join(data_dir, f) for f in os.listdir(data_dir)
-                        if f.startswith('sim_') and f.endswith('.txt')])
-        
-        if not files:
+        entries = load_analysis_entries(data_dir)
+        if not entries:
             print("  [1.2] No simulation files found.")
             return
-        
-        files_by_N = {}
-        for fpath in files:
-            meta, snaps, events = parse_simulation_file(fpath)
-            n = int(meta['N'])
-            if n not in files_by_N:
-                files_by_N[n] = []
-            files_by_N[n].append((fpath, meta, snaps, events))
+        files_by_N = group_entries_by_N(entries)
     
     N_values = sorted(files_by_N.keys())
     J_means = []
@@ -193,17 +198,7 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
     for N in N_values:
         J_list = []
         for entry in files_by_N[N]:
-            fpath, meta, snaps, events = entry[0], entry[1], entry[2], entry[3] if len(entry) > 3 else []
-            t_final = float(meta.get('t_final', 5.0))
-            
-            # Use event lines if available, otherwise fall back to snapshot diffing
-            if events:
-                times, cfc = compute_cfc_from_events(events, t_final)
-            else:
-                times, cfc = compute_cfc_from_snapshots(snaps)
-            
-            J, _, r2 = compute_scanning_rate(times, cfc)
-            J_list.append(J)
+            J_list.append(float(entry["cfc"]["J"]))
         
         J_means.append(np.mean(J_list))
         J_stds.append(np.std(J_list))
@@ -235,38 +230,40 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
     
     # ── Also plot C_fc(t) for the largest N ──────────────────────────────
     max_N = max(N_values)
-    fig2, ax2 = plt.subplots(figsize=(10, 7))
+    fig2, ax2 = plt.subplots(figsize=(13, 7))
     
-    for entry in files_by_N[max_N]:
-        fpath, meta, snaps, events = entry[0], entry[1], entry[2], entry[3] if len(entry) > 3 else []
+    colors = plt.cm.tab10(np.linspace(0, 1, max(len(files_by_N[max_N]), 1)))
+
+    for run_index, entry in enumerate(files_by_N[max_N], start=1):
+        fpath = entry["source_path"]
+        meta = entry["metadata"]
         t_final = float(meta.get('t_final', 5.0))
-        
-        if events:
-            times, cfc = compute_cfc_from_events(events, t_final)
-        else:
-            times, cfc = compute_cfc_from_snapshots(snaps)
-        
-        J, intercept, r2 = compute_scanning_rate(times, cfc)
-        
-        label_data = os.path.basename(fpath)
-        ax2.step(times, cfc, where='post', alpha=0.7, linewidth=1.5,
-                 label=f'{label_data}')
+        times = np.array(entry["cfc"]["times"], dtype=float)
+        cfc = np.array(entry["cfc"]["values"], dtype=float)
+        J = float(entry["cfc"]["J"])
+        intercept = float(entry["cfc"]["intercept"])
+        color = colors[run_index - 1]
+        run_label = describe_run(fpath, run_index)
+
+        ax2.step(times, cfc, where='post', alpha=0.8, linewidth=1.6, color=color,
+                 label=f'{run_label}: $C_{{fc}}(t)$')
         
         # Linear fit line
         t_fit = np.linspace(0, t_final, 100)
-        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.5, color='red',
-                 label=f'$J={J:.2f}$ contacts/s')
+        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.8, color=color,
+                 label=f'{run_label}: ajuste lineal ($J={J:.2f}$ contactos/s)')
     
     ax2.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax2.set_ylabel('$C_{fc}(t)$ [contactos acumulados]', fontsize=14)
     ax2.set_title(f'Inciso 1.2: $C_{{fc}}(t)$ para $N={max_N}$\n'
-                  f'(pendiente = scanning rate $J$)',
+                  f'cada escalon es un cambio F->U y la recta punteada tiene pendiente $J$',
                   fontsize=16, fontweight='bold')
-    ax2.legend(fontsize=10, loc='lower right')
+    ax2.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
+               borderaxespad=0.0)
     ax2.grid(True, alpha=0.3, linestyle='--')
     ax2.tick_params(axis='both', labelsize=12)
     
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 0.88, 1))
     outpath2 = os.path.join(output_dir, "inciso_1_2_cfc_curve.png")
     plt.savefig(outpath2, dpi=150, bbox_inches='tight')
     plt.close()
@@ -274,4 +271,16 @@ def plot_scanning_rate(files_by_N=None, output_dir="graphics/output"):
 
 
 if __name__ == '__main__':
-    plot_scanning_rate()
+    parser = argparse.ArgumentParser(description='Plot scanning rate <J>(N)')
+    parser.add_argument('path', nargs='?', default='data',
+                        help='Directory with sim_*.txt files or a single simulation file')
+    parser.add_argument('--output-dir', default='graphics/output',
+                        help='Directory to save the plots')
+    args = parser.parse_args()
+
+    if os.path.isfile(args.path):
+        entry = load_analysis_file(args.path)
+        files_by_N = {int(entry["metadata"]["N"]): [entry]}
+        plot_scanning_rate(files_by_N=files_by_N, output_dir=args.output_dir)
+    else:
+        plot_scanning_rate(data_dir=args.path, output_dir=args.output_dir)

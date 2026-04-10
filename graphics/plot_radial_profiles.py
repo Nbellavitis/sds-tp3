@@ -25,6 +25,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
+
 
 def parse_simulation_file(filepath):
     """Parse simulation file. Returns metadata, snapshots, events."""
@@ -81,140 +83,161 @@ def parse_simulation_file(filepath):
     return metadata, snapshots, events
 
 
+def build_shell_geometry(metadata, dS=0.2):
+    """Return physically valid shell edges, centers, and areas."""
+    R_enclosure = float(metadata['R_enclosure'])
+    r0 = float(metadata['r0'])
+    r_particle = float(metadata['r'])
+
+    # Particle centers can only move between these radii.
+    S_min = r0 + r_particle
+    S_max = R_enclosure - r_particle
+
+    shell_edges = np.arange(S_min, S_max + 1e-9, dS)
+    if shell_edges[-1] < S_max:
+        shell_edges = np.append(shell_edges, S_max)
+
+    S_centers = (shell_edges[:-1] + shell_edges[1:]) / 2.0
+    shell_areas = np.pi * (shell_edges[1:] ** 2 - shell_edges[:-1] ** 2)
+    return shell_edges, S_centers, shell_areas
+
+
 def compute_radial_profiles(snapshots, metadata, dS=0.2):
     """
     Compute radial profiles for fresh inward-moving particles.
     
     S = radial distance from center (origin).
-    Shells from S=0 to S=R_enclosure.
-    Only particles within valid center range (r0+r to R_enc-r) contribute.
-    
-    For each snapshot (steady state only), for each shell:
+    Shells cover the physically accessible range of particle centers:
+    S in [r0 + r, R_enclosure - r].
+
+    For each recorded event interval, for each shell:
     - Count fresh particles with R·v < 0
     - Compute density = count / shell_area
     - Compute mean radial velocity: vf_in = (R·v)/|R| (negative = inward)
+
+    The averages are time-weighted using the interval between consecutive
+    snapshots. This avoids biasing the profiles toward periods with many events.
     
     Returns:
         S_centers: array of shell center distances
-        rho_mean, rho_std: density <rho_f^in>(S) ± error
-        v_mean, v_std: radial velocity <vf_in>(S) ± error (not normalized)
+        rho_mean: density <rho_f^in>(S)
+        v_mean: radial velocity <vf_in>(S)
         J_in: flux = rho * |v|
     """
-    R_enclosure = float(metadata['R_enclosure'])
-    r0 = float(metadata['r0'])
-    r_particle = float(metadata['r'])
-    
-    # S ranges from 0 to R_enclosure
-    # But particle centers can only be at S in [r0+r, R_enc-r]
-    S_min = 0.0
-    S_max = R_enclosure
-    
-    shell_edges = np.arange(S_min, S_max + dS, dS)
-    n_shells = len(shell_edges) - 1
-    S_centers = (shell_edges[:-1] + shell_edges[1:]) / 2.0
-    
-    # Shell areas
-    shell_areas = np.array([
-        np.pi * (shell_edges[k+1]**2 - shell_edges[k]**2)
-        for k in range(n_shells)
-    ])
-    
-    # Only use steady-state snapshots (last 50%)
-    ss_start = len(snapshots) // 2
-    ss_snapshots = snapshots[ss_start:]
-    n_frames = len(ss_snapshots)
-    
-    if n_frames == 0:
-        return S_centers, np.zeros(n_shells), np.zeros(n_shells), \
-               np.zeros(n_shells), np.zeros(n_shells), np.zeros(n_shells)
-    
-    # Per-frame accumulation
-    count_per_frame = np.zeros((n_frames, n_shells))
-    v_sum_per_frame = np.zeros((n_frames, n_shells))
-    
-    for frame_idx, (t, particles) in enumerate(ss_snapshots):
+    shell_edges, S_centers, shell_areas = build_shell_geometry(metadata, dS)
+    n_shells = len(S_centers)
+
+    if len(snapshots) < 2:
+        return S_centers, np.zeros(n_shells), np.zeros(n_shells)
+
+    times = np.array([t for t, _ in snapshots], dtype=float)
+    durations = np.diff(times)
+    total_time = np.sum(durations)
+
+    if total_time <= 0:
+        return S_centers, np.zeros(n_shells), np.zeros(n_shells)
+
+    count_time = np.zeros(n_shells)
+    velocity_time_sum = np.zeros(n_shells)
+    particle_time = np.zeros(n_shells)
+
+    for (t, particles), dt in zip(snapshots[:-1], durations):
+        if dt <= 0:
+            continue
+
+        counts = np.zeros(n_shells)
+        velocity_sum = np.zeros(n_shells)
+
         for p in particles:
-            # Filter: only FRESH particles
             if p['state'] != 'F':
                 continue
-            
+
             x, y = p['x'], p['y']
             vx, vy = p['vx'], p['vy']
-            
-            S = np.sqrt(x * x + y * y)  # distance from center
-            
-            # Filter: R · v < 0 (velocity pointing toward center)
+            S = np.sqrt(x * x + y * y)
+
             rdotv = x * vx + y * vy
             if rdotv >= 0:
                 continue
-            
-            # Shell index
-            shell_idx = int((S - S_min) / dS)
-            if shell_idx < 0 or shell_idx >= n_shells:
+
+            if S < shell_edges[0] - 1e-12 or S > shell_edges[-1] + 1e-12:
                 continue
-            
-            # Radial velocity: vf_in = (R · v) / |R|
-            # This is NEGATIVE when inward (which we want)
+
+            shell_idx = np.searchsorted(shell_edges, S, side='right') - 1
+            shell_idx = min(max(shell_idx, 0), n_shells - 1)
+
             vf_in = rdotv / S if S > 1e-10 else 0.0
-            
-            count_per_frame[frame_idx, shell_idx] += 1
-            v_sum_per_frame[frame_idx, shell_idx] += vf_in
-    
-    # Density per frame: count / area
-    rho_per_frame = np.zeros((n_frames, n_shells))
-    v_per_frame = np.zeros((n_frames, n_shells))
-    
-    for k in range(n_shells):
-        rho_per_frame[:, k] = count_per_frame[:, k] / shell_areas[k]
-        for f in range(n_frames):
-            if count_per_frame[f, k] > 0:
-                v_per_frame[f, k] = v_sum_per_frame[f, k] / count_per_frame[f, k]
-    
-    # Average over frames
-    rho_mean = np.mean(rho_per_frame, axis=0)
-    rho_std = np.std(rho_per_frame, axis=0) / np.sqrt(n_frames)
-    
-    v_mean = np.mean(v_per_frame, axis=0)  # negative (inward)
-    v_std = np.std(v_per_frame, axis=0) / np.sqrt(n_frames)
-    
-    # J_in = <rho> * |<v>|
+            counts[shell_idx] += 1
+            velocity_sum[shell_idx] += vf_in
+
+        count_time += dt * counts
+        velocity_time_sum += dt * velocity_sum
+        particle_time += dt * counts
+
+    rho_mean = count_time / (total_time * shell_areas)
+    v_mean = np.zeros(n_shells)
+    nonzero = particle_time > 1e-12
+    v_mean[nonzero] = velocity_time_sum[nonzero] / particle_time[nonzero]
     J_in = rho_mean * np.abs(v_mean)
-    
-    return S_centers, rho_mean, rho_std, v_mean, v_std, J_in
+
+    return S_centers, rho_mean, v_mean, J_in
 
 
-def plot_radial_profiles(metadata=None, snapshots=None, filepath=None,
-                         output_dir="graphics/output", dS=0.2):
+def aggregate_radial_profiles(entries, dS=0.2):
+    """Average radial profiles over multiple realizations with per-run dispersion."""
+    profiles = [extract_radial_profiles(entry) for entry in entries]
+
+    S_centers = profiles[0][0]
+    rho_matrix = np.vstack([p[1] for p in profiles])
+    v_matrix = np.vstack([p[2] for p in profiles])
+    j_matrix = np.vstack([p[3] for p in profiles])
+
+    return (
+        S_centers,
+        np.mean(rho_matrix, axis=0),
+        np.std(rho_matrix, axis=0),
+        np.mean(v_matrix, axis=0),
+        np.std(v_matrix, axis=0),
+        np.mean(j_matrix, axis=0),
+        np.std(j_matrix, axis=0),
+    )
+
+
+def extract_radial_profiles(entry):
+    """Return cached radial profile arrays for one realization."""
+    radial = entry["radial_profiles"]
+    return (
+        np.array(radial["S_centers"], dtype=float),
+        np.array(radial["rho"], dtype=float),
+        np.array(radial["v"], dtype=float),
+        np.array(radial["J"], dtype=float),
+    )
+
+
+def plot_radial_profiles(entry=None, filepath=None, output_dir="graphics/output", dS=0.2):
     """
     Plot 3 radial profile curves: <rho_f^in>(S), |<vf_in>(S)|, J_in(S).
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    if metadata is None or snapshots is None:
+    if entry is None:
         if filepath is None:
             print("  [1.4] No data provided.")
             return
-        metadata, snapshots, _ = parse_simulation_file(filepath)
+        entry = load_analysis_file(filepath)
     
+    metadata = entry["metadata"]
     N = int(metadata['N'])
-    r0 = float(metadata['r0'])
-    r_particle = float(metadata['r'])
-    
-    S_centers, rho_mean, rho_std, v_mean, v_std, J_in = \
-        compute_radial_profiles(snapshots, metadata, dS)
-    
-    # Mask: only plot where there's valid physical range
-    valid = S_centers >= (r0 + r_particle - dS)
+    S_centers, rho_mean, v_mean, J_in = extract_radial_profiles(entry)
     
     # ── Three-panel figure ────────────────────────────────────────────────
     fig, axes = plt.subplots(3, 1, figsize=(10, 18), sharex=True)
     
     # --- Panel 1: Density <rho_f^in>(S) ---
     ax1 = axes[0]
-    ax1.errorbar(S_centers[valid], rho_mean[valid], yerr=rho_std[valid],
-                 fmt='o-', capsize=3, color='#1B5E20', markerfacecolor='#4CAF50',
-                 markeredgecolor='#1B5E20', markersize=3, linewidth=1.2,
-                 label=r'$\langle \rho_f^{in} \rangle(S)$')
+    ax1.plot(S_centers, rho_mean, 'o-', color='#1B5E20', markerfacecolor='#4CAF50',
+             markeredgecolor='#1B5E20', markersize=3, linewidth=1.2,
+             label=r'$\langle \rho_f^{in} \rangle(S)$')
     ax1.set_ylabel(r'$\langle \rho_f^{in} \rangle$ [partículas/m²]', fontsize=13)
     ax1.set_title(f'Inciso 1.4: Perfiles radiales — partículas frescas entrantes '
                   f'($N={N}$, $dS={dS}$ m)', fontsize=14, fontweight='bold')
@@ -225,10 +248,9 @@ def plot_radial_profiles(metadata=None, snapshots=None, filepath=None,
     
     # --- Panel 2: |<vf_in>(S)| ---
     ax2 = axes[1]
-    ax2.errorbar(S_centers[valid], np.abs(v_mean[valid]), yerr=v_std[valid],
-                 fmt='s-', capsize=3, color='#0D47A1', markerfacecolor='#2196F3',
-                 markeredgecolor='#0D47A1', markersize=3, linewidth=1.2,
-                 label=r'$|\langle v_f^{in} \rangle(S)|$')
+    ax2.plot(S_centers, np.abs(v_mean), 's-', color='#0D47A1', markerfacecolor='#2196F3',
+             markeredgecolor='#0D47A1', markersize=3, linewidth=1.2,
+             label=r'$|\langle v_f^{in} \rangle(S)|$')
     ax2.set_ylabel(r'$|\langle v_f^{in} \rangle|$ [m/s]', fontsize=13)
     ax2.legend(fontsize=12)
     ax2.grid(True, alpha=0.3, linestyle='--')
@@ -236,7 +258,7 @@ def plot_radial_profiles(metadata=None, snapshots=None, filepath=None,
     
     # --- Panel 3: Flux J_in(S) = <rho> * |<v>| ---
     ax3 = axes[2]
-    ax3.plot(S_centers[valid], J_in[valid], 'D-', color='#BF360C',
+    ax3.plot(S_centers, J_in, 'D-', color='#BF360C',
              markerfacecolor='#FF5722', markeredgecolor='#BF360C',
              markersize=3, linewidth=1.2,
              label=r'$J_{in}(S) = \langle \rho_f^{in} \rangle \cdot |\langle v_f^{in} \rangle|$')
@@ -256,6 +278,64 @@ def plot_radial_profiles(metadata=None, snapshots=None, filepath=None,
     return S_centers, rho_mean, v_mean, J_in
 
 
+def plot_radial_profiles_ensemble(entries, output_dir="graphics/output", dS=0.2):
+    """Plot radial profiles averaged over all realizations for one N."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    metadata = entries[0]["metadata"]
+    N = int(metadata['N'])
+    n_runs = len(entries)
+
+    S_centers, rho_mean, rho_std, v_mean, v_std, J_mean, J_std = \
+        aggregate_radial_profiles(entries, dS)
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 18), sharex=True)
+
+    ax1 = axes[0]
+    ax1.errorbar(S_centers, rho_mean, yerr=rho_std, fmt='o-', capsize=3,
+                 color='#1B5E20', markerfacecolor='#4CAF50',
+                 markeredgecolor='#1B5E20', markersize=3, linewidth=1.2,
+                 label=rf'$\langle \rho_f^{{in}} \rangle(S)$ ({n_runs} realizaciones)')
+    ax1.set_ylabel(r'$\langle \rho_f^{in} \rangle$ [partículas/m²]', fontsize=13)
+    ax1.set_title(f'Inciso 1.4: Perfiles radiales — partículas frescas entrantes '
+                  f'($N={N}$, $dS={dS}$ m)\npromedio sobre {n_runs} realizaciones',
+                  fontsize=14, fontweight='bold')
+    ax1.legend(fontsize=12)
+    ax1.grid(True, alpha=0.3, linestyle='--')
+    ax1.tick_params(axis='both', labelsize=11)
+    ax1.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
+
+    ax2 = axes[1]
+    ax2.errorbar(S_centers, np.abs(v_mean), yerr=v_std, fmt='s-', capsize=3,
+                 color='#0D47A1', markerfacecolor='#2196F3',
+                 markeredgecolor='#0D47A1', markersize=3, linewidth=1.2,
+                 label=r'$|\langle v_f^{in} \rangle(S)|$')
+    ax2.set_ylabel(r'$|\langle v_f^{in} \rangle|$ [m/s]', fontsize=13)
+    ax2.legend(fontsize=12)
+    ax2.grid(True, alpha=0.3, linestyle='--')
+    ax2.tick_params(axis='both', labelsize=11)
+
+    ax3 = axes[2]
+    ax3.errorbar(S_centers, J_mean, yerr=J_std, fmt='D-', capsize=3,
+                 color='#BF360C', markerfacecolor='#FF5722',
+                 markeredgecolor='#BF360C', markersize=3, linewidth=1.2,
+                 label=r'$J_{in}(S)$')
+    ax3.set_xlabel('Distancia radial $S$ [m]', fontsize=13)
+    ax3.set_ylabel(r'$J_{in}$ [partículas/(m$^2$·s)]', fontsize=13)
+    ax3.legend(fontsize=12)
+    ax3.grid(True, alpha=0.3, linestyle='--')
+    ax3.tick_params(axis='both', labelsize=11)
+    ax3.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
+
+    plt.tight_layout()
+    outpath = os.path.join(output_dir, f"inciso_1_4_radial_profiles_N{N}.png")
+    plt.savefig(outpath, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  [1.4] Saved: {outpath}")
+
+    return S_centers, rho_mean, v_mean, J_mean
+
+
 def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
     """
     For the shell at S ≈ 2m, plot J_in, <rho_f^in>, and |<vf_in>| as functions of N.
@@ -273,6 +353,8 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
     J_at_S2 = []
     rho_err = []
     v_err = []
+    j_err = []
+    selected_center = None
     
     for N in N_values:
         rho_list = []
@@ -280,11 +362,11 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
         j_list = []
         
         for entry in files_by_N[N]:
-            fpath, meta, snaps = entry[0], entry[1], entry[2]
-            S_centers, rho, _, v, _, J = compute_radial_profiles(snaps, meta, dS)
-            
-            # Find shell closest to S=2
-            idx = np.argmin(np.abs(S_centers - S_target))
+            S_centers, rho, v, J = extract_radial_profiles(entry)
+
+            # Pick the first physically valid shell, which is the one nearest S=2.
+            idx = np.where(S_centers >= S_target)[0][0]
+            selected_center = S_centers[idx]
             rho_list.append(rho[idx])
             v_list.append(np.abs(v[idx]))
             j_list.append(J[idx])
@@ -294,6 +376,7 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
         J_at_S2.append(np.mean(j_list))
         rho_err.append(np.std(rho_list))
         v_err.append(np.std(v_list))
+        j_err.append(np.std(j_list))
     
     # ── Plot ──────────────────────────────────────────────────────────────
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15), sharex=True)
@@ -302,7 +385,8 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
                  color='#1B5E20', markerfacecolor='#4CAF50', markersize=8,
                  linewidth=2, label=r'$\langle \rho_f^{in} \rangle$ at $S \approx 2$ m')
     ax1.set_ylabel(r'$\langle \rho_f^{in} \rangle$ [part/m²]', fontsize=13)
-    ax1.set_title(f'Inciso 1.4: Perfiles radiales en $S \\approx {S_target}$ m vs $N$',
+    ax1.set_title(f'Inciso 1.4: Perfiles radiales en la capa mas cercana a '
+                  f'$S={S_target}$ m ($S_c={selected_center:.1f}$ m) vs $N$',
                   fontsize=15, fontweight='bold')
     ax1.legend(fontsize=12)
     ax1.grid(True, alpha=0.3, linestyle='--')
@@ -315,8 +399,8 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
     ax2.legend(fontsize=12)
     ax2.grid(True, alpha=0.3, linestyle='--')
     
-    ax3.plot(N_values, J_at_S2, 'D-', color='#BF360C',
-             markerfacecolor='#FF5722', markersize=8, linewidth=2,
+    ax3.errorbar(N_values, J_at_S2, yerr=j_err, fmt='D-', capsize=5,
+             color='#BF360C', markerfacecolor='#FF5722', markersize=8, linewidth=2,
              label=r'$J_{in}$ at $S \approx 2$ m')
     ax3.set_xlabel('Número de partículas $N$', fontsize=13)
     ax3.set_ylabel(r'$J_{in}$ [part/(m²·s)]', fontsize=13)
@@ -339,26 +423,17 @@ if __name__ == '__main__':
     path = sys.argv[1]
     
     if os.path.isfile(path):
-        metadata, snapshots, _ = parse_simulation_file(path)
-        plot_radial_profiles(metadata, snapshots, path)
+        plot_radial_profiles(filepath=path)
     elif os.path.isdir(path):
-        files = sorted(glob.glob(os.path.join(path, 'sim_*.txt')))
-        if not files:
+        entries = load_analysis_entries(path)
+        if not entries:
             print("No simulation files found.")
             sys.exit(1)
+        files_by_N = group_entries_by_N(entries)
         
-        files_by_N = {}
-        for fpath in files:
-            meta, snaps, events = parse_simulation_file(fpath)
-            n = int(meta['N'])
-            if n not in files_by_N:
-                files_by_N[n] = []
-            files_by_N[n].append((fpath, meta, snaps, events))
-        
-        # Plot radial profiles for each N (first realization)
+        # Plot radial profiles for each N using all realizations.
         for N in sorted(files_by_N.keys()):
-            fpath, meta, snaps, _ = files_by_N[N][0]
-            plot_radial_profiles(meta, snaps, fpath)
+            plot_radial_profiles_ensemble(files_by_N[N])
         
         # Plot S≈2 vs N
         if len(files_by_N) > 1:

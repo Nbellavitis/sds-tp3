@@ -12,7 +12,7 @@ Simulación de partículas en un recinto circular con un obstáculo fijo en el c
 sds-tp3/
 ├── engine/                          # Motor de simulación (Java 17+)
 │   ├── pom.xml
-│   └── src/main/java/ar/edu/itba/sds/
+│   └── src/main/java/ar/edu/itba/sds/tp3/
 │       ├── Particle.java            # Partícula con colisiones y estados
 │       ├── Event.java               # Eventos para la PriorityQueue
 │       └── EventDrivenSimulation.java  # Motor principal (main)
@@ -21,13 +21,14 @@ sds-tp3/
 │   ├── plot_metrics.py              # Script principal (orquestador de todos los incisos)
 │   ├── plot_execution_time.py       # Inciso 1.1: Tiempo de ejecución vs N
 │   ├── plot_scanning_rate.py        # Inciso 1.2: Scanning rate <J>(N) + C_fc(t)
-│   ├── plot_fraction_used.py        # Inciso 1.3: F_u(t) + F_est(N) + t_est(N)
+│   ├── plot_fraction_used.py        # Inciso 1.3: F_u(t)
 │   ├── plot_radial_profiles.py      # Inciso 1.4: ρ(S), v(S), J_in(S) + vs N en S≈2
-│   ├── animate_system1.py           # Animación del sistema
+│   ├── animate_system1_mru.py       # Animación interpolada con MRU entre eventos
 │   └── run_batch.py                 # Runner de batch para múltiples N y seeds
 │
 ├── data/                            # Archivos de salida de la simulación
 │   └── sim_<N>N_<timestamp>_s<seed>.txt
+│   └── cache/                       # Cachés de análisis generadas por Java para post-procesado rápido
 │
 └── README.md
 ```
@@ -55,9 +56,9 @@ mvn compile
 # Opción 2: Con javac directamente
 cd ..
 javac -d engine/target/classes \
-  engine/src/main/java/ar/edu/itba/sds/Particle.java \
-  engine/src/main/java/ar/edu/itba/sds/Event.java \
-  engine/src/main/java/ar/edu/itba/sds/EventDrivenSimulation.java
+  engine/src/main/java/ar/edu/itba/sds/tp3/Particle.java \
+  engine/src/main/java/ar/edu/itba/sds/tp3/Event.java \
+  engine/src/main/java/ar/edu/itba/sds/tp3/EventDrivenSimulation.java
 ```
 
 ---
@@ -67,7 +68,8 @@ javac -d engine/target/classes \
 ### Ejecución simple
 
 ```bash
-java -cp engine/target/classes ar.edu.itba.sds.EventDrivenSimulation -N 200
+java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200
+java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 -t_final 8.0
 ```
 
 ### Parámetros
@@ -77,17 +79,19 @@ java -cp engine/target/classes ar.edu.itba.sds.EventDrivenSimulation -N 200
 | `-N`      | Número de partículas            | 100     |
 | `-seed`   | Semilla para reproducibilidad   | aleatorio |
 | `-runs`   | Número de realizaciones         | 1       |
+| `-t_final` | Tiempo final de simulación [s] | 5.0     |
 
 ### Múltiples realizaciones
 
 ```bash
-java -cp engine/target/classes ar.edu.itba.sds.EventDrivenSimulation -N 200 -runs 5 -seed 42
+java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 -runs 5 -seed 42 -t_final 8.0
 ```
 
 ### Batch (múltiples N)
 
 ```bash
 python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5
+python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5 --t-final 8.0
 ```
 
 ---
@@ -102,11 +106,14 @@ python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5
 | Radio partícula (r)  | 1     | m      |
 | Masa partícula (m)   | 1     | kg     |
 | Velocidad inicial (v₀)| 1    | m/s    |
-| Tiempo final (t_f)   | 5     | s      |
+| Tiempo final (t_f)   | 5 (default, configurable) | s |
 
 ---
 
 ## Generación de Gráficos
+
+Los scripts de `graphics/` ya no parsean directamente los `sim_*.txt` grandes en cada corrida.
+En la primera ejecución construyen una caché compacta en `data/cache/` usando Java, y luego Python solo carga esos datos y grafica.
 
 ### Todos los incisos (desde un directorio con múltiples archivos)
 
@@ -117,7 +124,7 @@ python graphics/plot_metrics.py data/
 ### Incisos 1.3 y 1.4 (desde un archivo individual)
 
 ```bash
-python graphics/plot_metrics.py data/sim_300N_20260409_144150_s42.txt
+python graphics/plot_metrics.py data/sim_300N_20260409_235938_s42.txt
 ```
 
 ---
@@ -131,6 +138,7 @@ python graphics/plot_execution_time.py
 ```
 
 - **Requisito:** `data/timing.txt` (generado por `run_batch.py`)
+- El título del gráfico usa el `t_f` guardado en `timing.txt` si está disponible
 - **Genera:** `graphics/output/inciso_1_1_execution_time.png`
 
 ---
@@ -152,21 +160,22 @@ python graphics/plot_scanning_rate.py
 ### Inciso 1.3 — Fracción de partículas usadas F_u(t)
 
 ```bash
-python graphics/plot_fraction_used.py data/sim_300N_*.txt   # un archivo
+python graphics/plot_fraction_used.py data/sim_300N_20260409_235938_s42.txt   # un archivo
 python graphics/plot_fraction_used.py data/                  # directorio
 ```
 
-- Reporta tiempo al estacionario (t_est) y valor estacionario (F_est)
+- Muestra `F_u(t)` para todas las realizaciones de cada `N`, superpuestas en un mismo gráfico
+- Genera además una figura colapsada donde cada color agrupa las realizaciones del mismo `N`
 - **Genera:**
-  - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — F_u(t) para cada N
-  - `graphics/output/inciso_1_3_fest_vs_N.png` — F_est(N) y t_est(N)
+  - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — realizaciones de `F_u(t)` para cada `N`
+  - `graphics/output/inciso_1_3_fraction_used_collapsed.png` — todas las curvas agrupadas por `N`
 
 ---
 
 ### Inciso 1.4 — Perfiles radiales
 
 ```bash
-python graphics/plot_radial_profiles.py data/sim_300N_*.txt  # un archivo
+python graphics/plot_radial_profiles.py data/sim_300N_20260409_235938_s42.txt  # un archivo
 python graphics/plot_radial_profiles.py data/                 # directorio
 ```
 
@@ -183,8 +192,8 @@ python graphics/plot_radial_profiles.py data/                 # directorio
 ### Animación
 
 ```bash
-python graphics/animate_system1.py data/sim_300N_*.txt
-python graphics/animate_system1.py data/sim_300N_*.txt --save anim.gif --skip 5
+python graphics/animate_system1_mru.py data/sim_300N_20260409_235938_s42.txt
+python graphics/animate_system1_mru.py data/sim_300N_20260409_235938_s42.txt --save anim.gif --fps 20 --speed 2.0
 ```
 
 ---
@@ -195,17 +204,17 @@ python graphics/animate_system1.py data/sim_300N_*.txt --save anim.gif --skip 5
 # N=300 L=80.0 R_enclosure=40.0 r0=1.0 r=1.0 m=1.0 v0=1.0 t_final=5.0
 # FORMAT: SNAPSHOT lines start with 'S', followed by time,
 # then N lines of: id x y vx vy state(F/U)
-# EVENT lines start with 'E': time type id1 [id2]
+# EVENT lines start with 'E': time id
 S 0.000000e+00
 0 1.234567e+01 -5.678901e+00 7.071068e-01 7.071068e-01 F
 1 -2.345678e+01 1.234567e+01 -5.000000e-01 8.660254e-01 F
 ...
 E 2.619697e+00 196       <-- F->U transition (for C_fc counting)
-S 1.000000e-02
+S 2.619697e+00
 ...
 ```
 
-- **`S <time>`**: snapshot — seguido de N líneas con estado de cada partícula
+- **`S <time>`**: snapshot en tiempos de evento — seguido de N líneas con estado de cada partícula
 - **`E <time> <id>`**: evento F→U — partícula fresca contactó el obstáculo central
 - Estado: `F` (fresca/verde) o `U` (usada/violeta)
 - Unidades MKS, notación científica
@@ -216,16 +225,18 @@ S 1.000000e-02
 
 ```bash
 # 1. Compilar
-javac -d engine/target/classes engine/src/main/java/ar/edu/itba/sds/*.java
+javac -d engine/target/classes engine/src/main/java/ar/edu/itba/sds/tp3/*.java
 
 # 2. Batch de simulaciones
 python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5
+# opcional: cambiar el tiempo final de simulación
+python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5 --t-final 8.0
 
 # 3. Todos los gráficos
 python graphics/plot_metrics.py data/
 
 # 4. Animación (opcional)
-python graphics/animate_system1.py data/sim_300N_*.txt --skip 10
+python graphics/animate_system1_mru.py data/sim_300N_20260409_235938_s42.txt --fps 20 --speed 2.0
 ```
 
 ---

@@ -1,4 +1,4 @@
-package ar.edu.itba.sds;
+package ar.edu.itba.sds.tp3;
 
 /**
  * Particle for Event-Driven Molecular Dynamics in a circular enclosure.

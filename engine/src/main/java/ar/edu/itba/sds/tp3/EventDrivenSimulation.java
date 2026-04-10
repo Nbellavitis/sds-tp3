@@ -1,4 +1,4 @@
-package ar.edu.itba.sds;
+package ar.edu.itba.sds.tp3;
 
 import java.io.*;
 import java.time.LocalDateTime;
@@ -24,10 +24,7 @@ public class EventDrivenSimulation {
     private static final double PARTICLE_RADIUS = 1.0;       // r = 1 m
     private static final double PARTICLE_MASS = 1.0;         // m = 1 kg
     private static final double V0 = 1.0;                    // initial speed [m/s]
-    private static final double T_FINAL = 5.0;               // simulation end time [s]
-
-    // ── Snapshot interval for output ─────────────────────────────────────
-    private static final double SNAPSHOT_DT = 0.01;          // output every 0.01 s
+    private static final double DEFAULT_T_FINAL = 5.0;       // default simulation end time [s]
 
     // ── Data ─────────────────────────────────────────────────────────────
     private final int N;
@@ -35,17 +32,19 @@ public class EventDrivenSimulation {
     private final PriorityQueue<Event> pq;
     private double currentTime;
     private final Random random;
+    private final double tFinal;
     private final String outputFilePath;
 
     // ── Metrics ──────────────────────────────────────────────────────────
     private int totalCollisions;
 
-    public EventDrivenSimulation(int N, long seed) {
+    public EventDrivenSimulation(int N, long seed, double tFinal) {
         this.N = N;
         this.particles = new Particle[N];
         this.pq = new PriorityQueue<>();
         this.currentTime = 0.0;
         this.random = new Random(seed);
+        this.tFinal = tFinal;
         this.totalCollisions = 0;
 
         // Generate unique filename with timestamp and seed
@@ -103,20 +102,20 @@ public class EventDrivenSimulation {
         for (int j = 0; j < N; j++) {
             if (j == i) continue;
             double dt = pi.timeToCollide(particles[j]);
-            if (currentTime + dt < T_FINAL) {
+            if (currentTime + dt < tFinal) {
                 pq.add(Event.particleParticle(currentTime + dt, pi, particles[j]));
             }
         }
 
         // Outer wall collision
         double dtWall = pi.timeToOuterWall(ENCLOSURE_RADIUS);
-        if (currentTime + dtWall < T_FINAL) {
+        if (currentTime + dtWall < tFinal) {
             pq.add(Event.particleOuterWall(currentTime + dtWall, pi));
         }
 
         // Obstacle collision
         double dtObs = pi.timeToObstacle(OBSTACLE_RADIUS);
-        if (currentTime + dtObs < T_FINAL) {
+        if (currentTime + dtObs < tFinal) {
             pq.add(Event.particleObstacle(currentTime + dtObs, pi));
         }
     }
@@ -133,19 +132,19 @@ public class EventDrivenSimulation {
             predictEvents(i);
         }
 
-        // Schedule first snapshot
-        pq.add(Event.snapshot(0.0));
-
         try (PrintWriter writer = new PrintWriter(new BufferedWriter(
                 new FileWriter(outputFilePath)))) {
 
             // Write metadata header
             writer.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
                     + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
-                    + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + T_FINAL);
+                    + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal);
             writer.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
             writer.println("# then N lines of: id x y vx vy state(F/U)");
-            writer.println("# EVENT lines start with 'E': time type id1 [id2]");
+            writer.println("# EVENT lines start with 'E': time id");
+
+            // Initial state at t = 0
+            writeSnapshot(writer);
 
             // Main event loop
             while (!pq.isEmpty()) {
@@ -155,7 +154,7 @@ public class EventDrivenSimulation {
                 if (!event.isValid()) continue;
 
                 // Event time beyond simulation end
-                if (event.getTime() > T_FINAL) break;
+                if (event.getTime() > tFinal) break;
 
                 // Advance all particles to event time
                 double dt = event.getTime() - currentTime;
@@ -179,6 +178,7 @@ public class EventDrivenSimulation {
                         int ib = findIndex(b);
                         predictEvents(ia);
                         predictEvents(ib);
+                        writeSnapshot(writer);
                     }
                     case PARTICLE_OUTER_WALL -> {
                         Particle a = event.getA();
@@ -187,6 +187,7 @@ public class EventDrivenSimulation {
 
                         int ia = findIndex(a);
                         predictEvents(ia);
+                        writeSnapshot(writer);
                     }
                     case PARTICLE_OBSTACLE -> {
                         Particle a = event.getA();
@@ -200,25 +201,22 @@ public class EventDrivenSimulation {
 
                         int ia = findIndex(a);
                         predictEvents(ia);
+                        writeSnapshot(writer);
                     }
                     case SNAPSHOT -> {
-                        writeSnapshot(writer);
-                        // Schedule next snapshot
-                        double nextSnap = currentTime + SNAPSHOT_DT;
-                        if (nextSnap <= T_FINAL) {
-                            pq.add(Event.snapshot(nextSnap));
-                        }
+                        // Snapshot events are no longer scheduled. Keep the case
+                        // to avoid surprising future callers if they are reintroduced.
                     }
                 }
             }
 
             // Final snapshot
-            if (currentTime < T_FINAL) {
-                double dt = T_FINAL - currentTime;
+            if (currentTime < tFinal) {
+                double dt = tFinal - currentTime;
                 for (Particle p : particles) {
                     p.advance(dt);
                 }
-                currentTime = T_FINAL;
+                currentTime = tFinal;
                 writeSnapshot(writer);
             }
 
@@ -252,6 +250,7 @@ public class EventDrivenSimulation {
         int N = 100;          // default
         long seed = -1;       // -1 means random seed
         int runs = 1;         // number of independent realizations
+        double tFinal = DEFAULT_T_FINAL;
 
         // Parse command-line arguments
         for (int i = 0; i < args.length; i++) {
@@ -259,12 +258,17 @@ public class EventDrivenSimulation {
                 case "-N" -> N = Integer.parseInt(args[++i]);
                 case "-seed" -> seed = Long.parseLong(args[++i]);
                 case "-runs" -> runs = Integer.parseInt(args[++i]);
+                case "-t", "-tf", "-t_final", "-tfinal" -> tFinal = Double.parseDouble(args[++i]);
             }
+        }
+
+        if (!Double.isFinite(tFinal) || tFinal <= 0.0) {
+            throw new IllegalArgumentException("t_final must be a positive finite value");
         }
 
         System.out.println("=== Event-Driven Molecular Dynamics ===");
         System.out.println("System 1: Scanning rate in circular enclosure");
-        System.out.println("N = " + N + ", L = " + L + " m, t_final = " + T_FINAL + " s");
+        System.out.println("N = " + N + ", L = " + L + " m, t_final = " + tFinal + " s");
         System.out.println("Enclosure radius = " + ENCLOSURE_RADIUS + " m");
         System.out.println("Obstacle radius  = " + OBSTACLE_RADIUS + " m");
         System.out.println("Particle radius  = " + PARTICLE_RADIUS + " m, mass = " + PARTICLE_MASS + " kg");
@@ -276,7 +280,7 @@ public class EventDrivenSimulation {
             long actualSeed = (seed < 0) ? System.nanoTime() : seed + run;
             System.out.println("--- Run " + (run + 1) + "/" + runs + " (seed=" + actualSeed + ") ---");
 
-            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed);
+            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal);
             long elapsedNs = sim.run();
             double elapsedMs = elapsedNs / 1e6;
 

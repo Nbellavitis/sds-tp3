@@ -7,21 +7,23 @@ Per the enunciado:
 - "Reportar tiempo al estacionario y valor del estacionario alcanzado (Fest) en función de N"
 
 This script generates:
-1. F_u(t) vs t plot for each N (shows transient and steady-state)
-2. F_est vs N plot (steady-state fraction as a function of N)
-3. t_est vs N plot (time to reach steady state)
+1. F_u(t) vs t for each realization when a single file is provided
+2. F_u(t) vs t for all realizations of a given N
+3. A collapsed F_u(t) plot grouping realizations by N
 
 Usage:
-    python graphics/plot_fraction_used.py data/sim_300N_*.txt
+    python graphics/plot_fraction_used.py data/sim_300N_20260409_235938_s42.txt
     python graphics/plot_fraction_used.py data/   (processes all files)
 """
 
 import sys
 import os
 import glob
+import re
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
+
+from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 
 
 def parse_simulation_file(filepath):
@@ -94,99 +96,73 @@ def compute_fraction_used(snapshots, N):
     return np.array(times), np.array(fu)
 
 
-def detect_steady_state(times, fu, threshold_fraction=0.05):
-    """
-    Detect when the system reaches steady state.
-    
-    Method: Find the first time when F_u stays within a band of width 
-    `threshold_fraction * F_u_final` around the final average value.
-    
-    Returns:
-        t_ss: time to reach steady state
-        f_est: steady-state value of F_u
-        f_est_std: standard deviation of F_u in steady state
-    """
-    if len(times) < 10 or np.max(fu) < 1e-10:
-        return times[-1] if len(times) > 0 else 0.0, 0.0, 0.0
-    
-    # Steady-state value: mean of last 25%
-    ss_start = int(0.75 * len(fu))
-    f_est = np.mean(fu[ss_start:])
-    f_est_std = np.std(fu[ss_start:])
-    
-    # Time to steady state: first time F_u enters the band and stays
-    band = max(f_est_std * 2, f_est * threshold_fraction, 0.01)
-    
-    t_ss = times[-1]  # default to end of simulation
-    window = max(1, len(fu) // 20)
-    
-    for i in range(len(fu) - window):
-        segment = fu[i:i + window]
-        if np.all(np.abs(segment - f_est) < band):
-            t_ss = times[i]
-            break
-    
-    return t_ss, f_est, f_est_std
+def describe_run(fpath, run_index):
+    """Build a readable label for one realization."""
+    basename = os.path.basename(fpath)
+    seed_match = re.search(r'_s(\d+)\.txt$', basename)
+    if seed_match:
+        return f'Realizacion {run_index} (seed={seed_match.group(1)})'
+    return f'Realizacion {run_index}'
 
 
-def plot_fraction_used(metadata=None, snapshots=None, filepath=None,
-                       output_dir="graphics/output"):
+def extract_fu_series(entry):
+    """Return cached F_u(t) arrays for one realization."""
+    return (
+        np.array(entry["fu"]["times"], dtype=float),
+        np.array(entry["fu"]["values"], dtype=float),
+    )
+
+
+def get_fraction_ylim(fu, fu_std=None):
+    """
+    Pick a y-axis range that matches the actual scale of F_u(t).
+    """
+    upper = float(np.max(fu))
+    if fu_std is not None:
+        upper = max(upper, float(np.max(fu + fu_std)))
+
+    if upper < 1e-12:
+        return 0.0, 0.05
+
+    margin = max(upper * 0.15, 0.01)
+    return 0.0, upper + margin
+
+
+def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
     """
     Plot F_u(t) for a single simulation file.
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    if metadata is None or snapshots is None:
+    if entry is None:
         if filepath is None:
             print("  [1.3] No data provided.")
             return
-        metadata, snapshots, _ = parse_simulation_file(filepath)
+        entry = load_analysis_file(filepath)
     
+    metadata = entry["metadata"]
     N = int(metadata['N'])
-    times, fu = compute_fraction_used(snapshots, N)
+    times, fu = extract_fu_series(entry)
     
     if len(times) == 0:
         print("  [1.3] No snapshots found.")
         return
     
-    t_ss, f_est, f_est_std = detect_steady_state(times, fu)
-    
-    # Moving average for smoothing
-    window = max(1, len(fu) // 20)
-    if window > 1:
-        fu_smooth = np.convolve(fu, np.ones(window) / window, mode='valid')
-        t_smooth = times[:len(fu_smooth)]
-    else:
-        fu_smooth = fu
-        t_smooth = times
-    
     # ── Plot ──────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(10, 7))
-    
-    ax.plot(times, fu, alpha=0.4, color='#7B1FA2', linewidth=0.8,
-            label='$F_u(t)$ instantáneo')
-    
-    if window > 1:
-        ax.plot(t_smooth, fu_smooth, color='#4A148C', linewidth=2.0,
-                label=f'$F_u(t)$ promedio móvil (ventana={window})')
-    
-    # Steady-state band
-    ax.axhline(y=f_est, color='#E91E63', linestyle='--', linewidth=1.5,
-               label=f'$F_{{est}} = {f_est:.4f} \\pm {f_est_std:.4f}$')
-    ax.axhspan(f_est - f_est_std, f_est + f_est_std, alpha=0.1, color='#E91E63')
-    
-    # Time to steady state
-    ax.axvline(x=t_ss, color='#FF9800', linestyle=':', linewidth=1.5,
-               label=f'$t_{{est}} = {t_ss:.3f}$ s')
+
+    ax.step(times, fu, where='post', color='#5E35B1', linewidth=2.0,
+            label='$F_u(t)$')
     
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
     ax.set_title(f'Inciso 1.3: Evolución temporal de $F_u(t)$ ($N={N}$)',
                  fontsize=16, fontweight='bold')
-    ax.legend(fontsize=11, loc='best')
+    ax.legend(fontsize=11, loc='upper left')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ax.set_ylim(-0.05, max(1.05, np.max(fu) * 1.1))
+    ymin, ymax = get_fraction_ylim(fu)
+    ax.set_ylim(ymin, ymax)
     ax.set_xlim(times[0], times[-1])
     
     plt.tight_layout()
@@ -194,70 +170,96 @@ def plot_fraction_used(metadata=None, snapshots=None, filepath=None,
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
-    print(f"  [1.3] N={N}: F_est = {f_est:.4f} ± {f_est_std:.4f}, t_est = {t_ss:.3f} s")
-    
-    return t_ss, f_est, f_est_std
+    print(f"  [1.3] N={N}: gráfico temporal de F_u(t) generado sin estimación automática del estacionario.")
 
 
-def plot_fest_vs_N(files_by_N, output_dir="graphics/output"):
+def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     """
-    Plot F_est(N) and t_est(N) — steady-state fraction and time as functions of N.
-    Required by the enunciado: "Reportar tiempo al estacionario y valor del 
-    estacionario alcanzado (Fest) en función de N."
+    Plot all F_u(t) realizations for a given N on the same axes.
     """
     os.makedirs(output_dir, exist_ok=True)
-    
+
+    metadata = entries[0]["metadata"]
+    N = int(metadata['N'])
+    n_runs = len(entries)
+    colors = plt.cm.tab10(np.linspace(0, 1, max(n_runs, 1)))
+    max_fu = 0.0
+    t_max = 0.0
+
+    fig, ax = plt.subplots(figsize=(13, 7))
+
+    for run_index, entry in enumerate(entries, start=1):
+        fpath = entry["source_path"]
+        times, fu = extract_fu_series(entry)
+        if len(times) == 0:
+            continue
+        max_fu = max(max_fu, float(np.max(fu)))
+        t_max = max(t_max, float(times[-1]))
+        ax.step(times, fu, where='post', alpha=0.85, linewidth=1.6,
+                color=colors[run_index - 1],
+                label=f'{describe_run(fpath, run_index)}: $F_u(t)$')
+
+    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
+    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
+    ax.set_title(f'Inciso 1.3: $F_u(t)$ para $N={N}$\n'
+                 f'{n_runs} realizaciones superpuestas',
+                 fontsize=16, fontweight='bold')
+    ax.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
+              borderaxespad=0.0)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.tick_params(axis='both', labelsize=12)
+    ymin, ymax = get_fraction_ylim(np.array([0.0, max_fu]))
+    ax.set_ylim(ymin, ymax)
+    ax.set_xlim(0.0, t_max)
+
+    plt.tight_layout(rect=(0, 0, 0.88, 1))
+    outpath = os.path.join(output_dir, f"inciso_1_3_fraction_used_N{N}.png")
+    plt.savefig(outpath, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  [1.3] Saved: {outpath}")
+    print(f"  [1.3] N={N}: gráfico con {n_runs} realizaciones superpuestas.")
+
+
+def plot_fraction_used_collapsed(files_by_N, output_dir="graphics/output"):
+    """
+    Plot all F_u(t) curves together, grouping realizations by N using color.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
     N_values = sorted(files_by_N.keys())
-    fest_means = []
-    fest_stds = []
-    test_means = []
-    test_stds = []
-    
-    for N in N_values:
-        fest_list = []
-        test_list = []
-        
+    colors = plt.cm.viridis(np.linspace(0, 1, max(len(N_values), 1)))
+    max_fu = 0.0
+    t_max = 0.0
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    for color, N in zip(colors, N_values):
+        first_for_N = True
         for entry in files_by_N[N]:
-            fpath = entry[0]
-            meta = entry[1]
-            snaps = entry[2]
-            
-            n = int(meta['N'])
-            times, fu = compute_fraction_used(snaps, n)
-            t_ss, f_est, _ = detect_steady_state(times, fu)
-            fest_list.append(f_est)
-            test_list.append(t_ss)
-        
-        fest_means.append(np.mean(fest_list))
-        fest_stds.append(np.std(fest_list))
-        test_means.append(np.mean(test_list))
-        test_stds.append(np.std(test_list))
-    
-    # ── Plot F_est(N) ─────────────────────────────────────────────────────
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
-    
-    ax1.errorbar(N_values, fest_means, yerr=fest_stds, fmt='o-', capsize=5,
-                 color='#7B1FA2', markerfacecolor='#CE93D8', markersize=8,
-                 linewidth=2, label=r'$\langle F_{est} \rangle \pm \sigma$')
-    ax1.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax1.set_ylabel(r'$F_{est}$ (fracción estacionaria)', fontsize=14)
-    ax1.set_title(r'Inciso 1.3: $F_{est}$ vs $N$', fontsize=16, fontweight='bold')
-    ax1.legend(fontsize=12)
-    ax1.grid(True, alpha=0.3, linestyle='--')
-    ax1.tick_params(axis='both', labelsize=12)
-    
-    ax2.errorbar(N_values, test_means, yerr=test_stds, fmt='s-', capsize=5,
-                 color='#FF6F00', markerfacecolor='#FFB74D', markersize=8,
-                 linewidth=2, label=r'$\langle t_{est} \rangle \pm \sigma$')
-    ax2.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax2.set_ylabel(r'Tiempo al estacionario $t_{est}$ [s]', fontsize=14)
-    ax2.set_title(r'Inciso 1.3: $t_{est}$ vs $N$', fontsize=16, fontweight='bold')
-    ax2.legend(fontsize=12)
-    ax2.grid(True, alpha=0.3, linestyle='--')
-    ax2.tick_params(axis='both', labelsize=12)
-    
+            times, fu = extract_fu_series(entry)
+            if len(times) == 0:
+                continue
+            max_fu = max(max_fu, float(np.max(fu)))
+            t_max = max(t_max, float(times[-1]))
+            label = f'$N={N}$' if first_for_N else None
+            ax.step(times, fu, where='post', color=color, alpha=0.45,
+                    linewidth=1.4, label=label)
+            first_for_N = False
+
+    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
+    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
+    ax.set_title('Inciso 1.3: $F_u(t)$ colapsado por $N$\n'
+                 'cada color agrupa todas las realizaciones de un mismo N',
+                 fontsize=16, fontweight='bold')
+    ax.legend(fontsize=11, loc='upper left')
+    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.tick_params(axis='both', labelsize=12)
+    ymin, ymax = get_fraction_ylim(np.array([0.0, max_fu]))
+    ax.set_ylim(ymin, ymax)
+    ax.set_xlim(0.0, t_max)
+
     plt.tight_layout()
-    outpath = os.path.join(output_dir, "inciso_1_3_fest_vs_N.png")
+    outpath = os.path.join(output_dir, "inciso_1_3_fraction_used_collapsed.png")
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
@@ -271,30 +273,20 @@ if __name__ == '__main__':
     path = sys.argv[1]
     
     if os.path.isfile(path):
-        metadata, snapshots, _ = parse_simulation_file(path)
-        plot_fraction_used(metadata, snapshots, path)
+        plot_fraction_used(filepath=path)
     elif os.path.isdir(path):
-        files = sorted(glob.glob(os.path.join(path, 'sim_*.txt')))
-        if not files:
+        entries = load_analysis_entries(path)
+        if not entries:
             print("No simulation files found.")
             sys.exit(1)
+        files_by_N = group_entries_by_N(entries)
         
-        files_by_N = {}
-        for fpath in files:
-            meta, snaps, events = parse_simulation_file(fpath)
-            n = int(meta['N'])
-            if n not in files_by_N:
-                files_by_N[n] = []
-            files_by_N[n].append((fpath, meta, snaps, events))
-        
-        # Plot F_u(t) for each N (using first realization)
+        # Plot F_u(t) realizations for each N and a collapsed summary across N.
         for N in sorted(files_by_N.keys()):
-            fpath, meta, snaps, _ = files_by_N[N][0]
-            plot_fraction_used(meta, snaps, fpath)
-        
-        # Plot F_est(N) and t_est(N)
+            plot_fraction_used_realizations(files_by_N[N])
         if len(files_by_N) > 1:
-            plot_fest_vs_N(files_by_N)
+            plot_fraction_used_collapsed(files_by_N)
+        
     else:
         print(f"Error: '{path}' not found.")
         sys.exit(1)

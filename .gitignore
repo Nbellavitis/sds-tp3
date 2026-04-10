@@ -108,6 +108,7 @@ pip-wheel-metadata/
 .pyre/
 data/sim_*.txt
 data/timing.txt
+data/cache/
 graphics/output/
 
 # --- Go ---

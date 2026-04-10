@@ -1,6 +1,6 @@
 """
 plot_execution_time.py - Inciso 1.1
-Generates: Execution Time vs N (up to t_f = 5 s)
+Generates: Execution Time vs N.
 
 Reads multiple simulation output files from data/ directory,
 extracts the wall-clock execution time from each, and plots
@@ -10,16 +10,15 @@ Usage:
     python graphics/plot_execution_time.py data/
 """
 
-import sys
 import os
 import re
 import subprocess
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
 
 
-def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42):
+def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.0):
     """
     Run simulations for various N values and measure execution time.
     Returns dict: N -> list of execution times [ms]
@@ -36,7 +35,7 @@ def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42):
             cmd = [
                 "java", "-cp", "engine/target/classes",
                 "ar.edu.itba.sds.tp3.EventDrivenSimulation",
-                "-N", str(N), "-seed", str(seed)
+                "-N", str(N), "-seed", str(seed), "-t_final", str(t_final)
             ]
             print(f"  Running N={N}, run {run+1}/{runs_per_N}...")
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
@@ -58,12 +57,22 @@ def parse_time_from_files(data_dir):
     """
     timing_file = os.path.join(data_dir, "timing.txt")
     times_by_N = {}
+    metadata = {}
     
     if os.path.exists(timing_file):
         with open(timing_file, 'r') as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
+                if not line:
+                    continue
+                if line.startswith('#'):
+                    for key, value in re.findall(r'([A-Za-z_]+)=([^\s,]+)', line):
+                        try:
+                            metadata[key] = float(value)
+                        except ValueError:
+                            metadata[key] = value
+                    continue
+                if line:
                     parts = line.split()
                     N = int(parts[0])
                     t = float(parts[1])
@@ -71,10 +80,10 @@ def parse_time_from_files(data_dir):
                         times_by_N[N] = []
                     times_by_N[N].append(t)
     
-    return times_by_N
+    return times_by_N, metadata
 
 
-def plot_execution_time(files_by_N=None, output_dir="graphics/output"):
+def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/output"):
     """
     Plot execution time vs N.
     
@@ -86,7 +95,7 @@ def plot_execution_time(files_by_N=None, output_dir="graphics/output"):
     os.makedirs(output_dir, exist_ok=True)
     
     # Try to read timing data
-    times_by_N = parse_time_from_files("data")
+    times_by_N, timing_metadata = parse_time_from_files(data_dir)
     
     if not times_by_N:
         print("  [1.1] No timing data found. Run simulations first or provide timing.txt")
@@ -107,8 +116,12 @@ def plot_execution_time(files_by_N=None, output_dir="graphics/output"):
     
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel('Tiempo de ejecución [ms]', fontsize=14)
-    ax.set_title('Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = 5$ s)',
-                 fontsize=16, fontweight='bold')
+    t_final = timing_metadata.get('t_final')
+    if isinstance(t_final, (int, float)):
+        title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {t_final:g}$ s)'
+    else:
+        title = 'Inciso 1.1: Tiempo de ejecución vs $N$'
+    ax.set_title(title, fontsize=16, fontweight='bold')
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
@@ -124,7 +137,11 @@ def plot_execution_time(files_by_N=None, output_dir="graphics/output"):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        plot_execution_time(output_dir=sys.argv[1] if len(sys.argv) > 1 else "graphics/output")
-    else:
-        plot_execution_time()
+    parser = argparse.ArgumentParser(description='Plot execution time vs N')
+    parser.add_argument('data_dir', nargs='?', default='data',
+                        help='Directory containing timing.txt (default: data)')
+    parser.add_argument('--output-dir', default='graphics/output',
+                        help='Directory to save the plot')
+    args = parser.parse_args()
+
+    plot_execution_time(data_dir=args.data_dir, output_dir=args.output_dir)
