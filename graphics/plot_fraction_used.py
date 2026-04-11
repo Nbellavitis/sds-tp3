@@ -8,7 +8,8 @@ Per the enunciado:
 
 This script generates:
 1. F_u(t) vs t for one simulation when a single file is provided
-2. A single overlay figure with all realizations across all N when a directory is provided
+2. F_u(t) vs t for all realizations of each N when a directory is provided
+3. Manual summary plots for t_est(N) and F_est(N)
 
 Usage:
     python graphics/plot_fraction_used.py data/sim_300N_20260409_235938_s42.txt
@@ -26,7 +27,23 @@ from matplotlib.ticker import MultipleLocator
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 
 
-DEFAULT_T_STATIONARY = 400.0
+MANUAL_T_EST_BY_N = {
+    50: 200.0,
+    100: 200.0,
+    150: 300.0,
+    200: 300.0,
+    250: 400.0,
+    300: 400.0,
+}
+
+MANUAL_F_EST_BY_N = {
+    50: 0.06,
+    100: 0.08,
+    150: 0.09,
+    200: 0.11,
+    250: 0.12,
+    300: 0.13,
+}
 
 
 def parse_simulation_file(filepath):
@@ -145,20 +162,34 @@ def get_fraction_ylim(fu, fu_std=None):
     return 0.0, float(ymax), float(step)
 
 
-def get_zoom_ylim(series_max):
-    """Y-range tuned for visual plateau detection in F_u(t)."""
-    upper = max(float(series_max), 1e-6)
-    target = upper * 1.12
-    if target <= 0.1:
-        step = 0.01
-    elif target <= 0.2:
-        step = 0.02
-    elif target <= 0.5:
-        step = 0.05
-    else:
-        step = 0.1
-    ymax = min(1.0, np.ceil(target / step) * step)
-    return 0.0, float(ymax), float(step)
+def get_manual_stationary_values(N):
+    """Return manually assigned stationary values for one N."""
+    return MANUAL_T_EST_BY_N.get(N), MANUAL_F_EST_BY_N.get(N)
+
+
+def add_stationary_reference_lines(ax, N):
+    """Draw manual t_est and F_est references when available."""
+    t_est, f_est = get_manual_stationary_values(N)
+
+    if f_est is not None:
+        ax.axhline(
+            f_est,
+            color="#D81B60",
+            linestyle="--",
+            linewidth=1.8,
+            label=rf"$F_{{est}}={f_est:.2f}$",
+        )
+
+    if t_est is not None:
+        ax.axvline(
+            t_est,
+            color="#FB8C00",
+            linestyle="--",
+            linewidth=1.8,
+            label=rf"$t_{{est}}={t_est:g}$",
+        )
+
+    return t_est, f_est
 
 
 def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
@@ -186,6 +217,7 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
 
     ax.step(times, fu, where='post', color='#5E35B1', linewidth=2.0,
             label='$F_u(t)$')
+    t_est, f_est = add_stationary_reference_lines(ax, N)
     
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
@@ -194,7 +226,8 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
     ax.legend(fontsize=11, loc='upper left')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ymin, ymax, ystep = get_fraction_ylim(fu)
+    ylim_samples = np.array([0.0, float(np.max(fu)), f_est or 0.0])
+    ymin, ymax, ystep = get_fraction_ylim(ylim_samples)
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(times[0], times[-1])
     ax.yaxis.set_major_locator(MultipleLocator(ystep))
@@ -204,7 +237,7 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
-    print(f"  [1.3] N={N}: gráfico temporal de F_u(t) generado sin estimación automática del estacionario.")
+    print(f"  [1.3] N={N}: gráfico temporal de F_u(t) con referencias manuales t_est={t_est} y F_est={f_est}.")
 
 
 def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
@@ -233,6 +266,8 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
                 color=colors[run_index - 1],
                 label=f'{describe_run(fpath, run_index)}: $F_u(t)$')
 
+    t_est, f_est = add_stationary_reference_lines(ax, N)
+
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
     ax.set_title(f'Inciso 1.3: $F_u(t)$ para $N={N}$\n'
@@ -242,7 +277,8 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
               borderaxespad=0.0)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ymin, ymax, ystep = get_fraction_ylim(np.array([0.0, max_fu]))
+    ylim_samples = np.array([0.0, max_fu, f_est or 0.0])
+    ymin, ymax, ystep = get_fraction_ylim(ylim_samples)
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(0.0, t_max)
     ax.yaxis.set_major_locator(MultipleLocator(ystep))
@@ -252,249 +288,87 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
-    print(f"  [1.3] N={N}: gráfico con {n_runs} realizaciones superpuestas.")
+    print(f"  [1.3] N={N}: gráfico con {n_runs} realizaciones superpuestas y referencias t_est={t_est}, F_est={f_est}.")
 
 
-def plot_fraction_used_across_N(files_by_N, output_dir="graphics/output"):
-    """
-    Plot F_u(t) superposing all N using raw realizations only.
+def get_available_manual_N_values(files_by_N):
+    """Return N values present in the data and in both manual estimate tables."""
+    return [
+        N for N in sorted(files_by_N.keys())
+        if N in MANUAL_T_EST_BY_N and N in MANUAL_F_EST_BY_N
+    ]
 
-    This view is intended to estimate the transient-to-stationary time by eye
-    without averaging realizations beforehand.
-    """
+
+def plot_t_est_vs_N(files_by_N, output_dir="graphics/output"):
+    """Plot manual t_est values as a function of N."""
     os.makedirs(output_dir, exist_ok=True)
 
-    N_values = sorted(files_by_N.keys())
+    N_values = get_available_manual_N_values(files_by_N)
     if not N_values:
-        print("  [1.3] No N groups available for cross-N overlay.")
+        print("  [1.3] No manual t_est values available for the loaded N set.")
         return
 
-    all_tmax = []
-    all_series_max = []
-
-    grouped_series = {}
-    for N in N_values:
-        runs = []
-        for entry in files_by_N[N]:
-            times, fu = extract_fu_series(entry)
-            if len(times) == 0:
-                continue
-            runs.append((times, fu))
-            all_tmax.append(float(times[-1]))
-            all_series_max.append(float(np.max(fu)))
-        grouped_series[N] = runs
-
-    if not all_tmax:
-        print("  [1.3] Could not build cross-N overlay (no time series found).")
-        return
-
-    t_max = max(all_tmax)
-
-    fig, ax = plt.subplots(figsize=(12, 7))
-    colors = plt.cm.viridis(np.linspace(0.08, 0.92, len(N_values)))
-
-    legend_labels = []
-    for idx, N in enumerate(N_values):
-        runs = grouped_series[N]
-        if not runs:
-            continue
-
-        color = colors[idx]
-        for run_index, (times, fu) in enumerate(runs, start=1):
-            label = None
-            if run_index == 1:
-                label = f'N={N} ({len(runs)} realizaciones)'
-                legend_labels.append(label)
-            ax.step(times, fu, where='post', linewidth=1.4, alpha=0.35,
-                    color=color, label=label)
-
-    ymin, ymax, ystep = get_zoom_ylim(max(all_series_max))
-    ax.set_ylim(ymin, ymax)
-    ax.set_xlim(0.0, t_max)
-    ax.yaxis.set_major_locator(MultipleLocator(ystep))
-
-    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
-    ax.set_ylabel('Fracción de partículas usadas $F_u(t)$', fontsize=14)
-    ax.set_title('Inciso 1.3: $F_u(t)$ superpuesto para distintos $N$\n'
-                 'series crudas por realización (sin promedio previo, escala Y ampliada)',
-                 fontsize=16, fontweight='bold')
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
-    ax.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
-              borderaxespad=0.0)
-
-    plt.tight_layout(rect=(0, 0, 0.84, 1))
-    outpath = os.path.join(output_dir, 'inciso_1_3_fraction_used_all_N_overlay.png')
-    plt.savefig(outpath, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"  [1.3] Saved: {outpath}")
-    print(f"  [1.3] Overlay por N listo (sin promedio previo; Y in [0, {ymax:.3f}] para inspección visual del estacionario).")
-
-
-def seed_from_entry(entry):
-    """Extract seed from source filename when available."""
-    src = os.path.basename(entry.get("source_path", ""))
-    match = re.search(r'_s(\d+)\.txt$', src)
-    return int(match.group(1)) if match else None
-
-
-def pick_one_entry_per_N(files_by_N):
-    """Pick one deterministic realization per N (lowest seed if present)."""
-    selected = {}
-    for N, entries in files_by_N.items():
-        if not entries:
-            continue
-        selected_entry = min(
-            entries,
-            key=lambda e: (
-                seed_from_entry(e) is None,
-                seed_from_entry(e) if seed_from_entry(e) is not None else 10**18,
-                e.get("source_path", ""),
-            ),
-        )
-        selected[N] = selected_entry
-    return selected
-
-
-def plot_fraction_used_one_run_per_N(files_by_N, output_dir="graphics/output"):
-    """
-    Plot one raw realization per N on the same figure (no averaging).
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    selected = pick_one_entry_per_N(files_by_N)
-    N_values = sorted(selected.keys())
-    if not N_values:
-        print("  [1.3] No entries available for one-run-per-N plot.")
-        return
-
-    colors = plt.cm.viridis(np.linspace(0.08, 0.92, len(N_values)))
-    fig, ax = plt.subplots(figsize=(12, 7))
-
-    max_fu = 0.0
-    t_max = 0.0
-    for idx, N in enumerate(N_values):
-        entry = selected[N]
-        times, fu = extract_fu_series(entry)
-        if len(times) == 0:
-            continue
-
-        max_fu = max(max_fu, float(np.max(fu)))
-        t_max = max(t_max, float(times[-1]))
-        seed = seed_from_entry(entry)
-        seed_label = f", seed={seed}" if seed is not None else ""
-        ax.step(times, fu, where='post', linewidth=1.8, alpha=0.95,
-                color=colors[idx], label=f'N={N}{seed_label}')
-
-    ymin, ymax, ystep = get_zoom_ylim(max_fu)
-    ax.set_ylim(ymin, ymax)
-    ax.set_xlim(0.0, t_max)
-    ax.yaxis.set_major_locator(MultipleLocator(ystep))
-    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
-    ax.set_ylabel('Fracción de partículas usadas $F_u(t)$', fontsize=14)
-    ax.set_title('Inciso 1.3: una realización cruda por cada $N$\n'
-                 'superposición para estimar visualmente el estacionario',
-                 fontsize=16, fontweight='bold')
-    ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
-    ax.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
-              borderaxespad=0.0)
-
-    plt.tight_layout(rect=(0, 0, 0.84, 1))
-    outpath = os.path.join(output_dir, 'inciso_1_3_fraction_used_one_run_per_N.png')
-    plt.savefig(outpath, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"  [1.3] Saved: {outpath}")
-    print("  [1.3] Gráfico crudo por N listo (una realización por N, sin promedio).")
-
-
-def compute_fest_for_run(times, fu, t_stationary=DEFAULT_T_STATIONARY):
-    """Compute time-weighted stationary mean of F_u(t) over [t_stationary, t_final]."""
-    if len(times) < 2:
-        return np.nan
-
-    t_start = max(float(t_stationary), float(times[0]))
-    t_end = float(times[-1])
-    if t_end <= t_start:
-        return np.nan
-
-    weighted_sum = 0.0
-    total_dt = 0.0
-    for i in range(len(times) - 1):
-        seg_start = float(times[i])
-        seg_end = float(times[i + 1])
-        overlap_start = max(seg_start, t_start)
-        overlap_end = min(seg_end, t_end)
-        dt = overlap_end - overlap_start
-        if dt > 0:
-            weighted_sum += dt * float(fu[i])
-            total_dt += dt
-
-    if total_dt <= 0:
-        return np.nan
-    return weighted_sum / total_dt
-
-
-def plot_fest_vs_N(files_by_N, output_dir="graphics/output", t_stationary=DEFAULT_T_STATIONARY):
-    """
-    Plot final result for inciso 1.3: <F_est> vs N with ensemble std error bars.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    N_values = []
-    fest_means = []
-    fest_stds = []
-
-    for N in sorted(files_by_N.keys()):
-        fest_runs = []
-        for entry in files_by_N[N]:
-            times, fu = extract_fu_series(entry)
-            fest_run = compute_fest_for_run(times, fu, t_stationary)
-            if np.isfinite(fest_run):
-                fest_runs.append(fest_run)
-
-        if not fest_runs:
-            print(f"  [1.3] WARNING: N={N} has no valid samples for t >= {t_stationary:g} s")
-            continue
-
-        fest_runs = np.array(fest_runs, dtype=float)
-        N_values.append(N)
-        fest_means.append(float(np.mean(fest_runs)))
-        if len(fest_runs) > 1:
-            fest_stds.append(float(np.std(fest_runs, ddof=1)))
-        else:
-            fest_stds.append(0.0)
-
-        print(f"  [1.3] N={N}: <F_est> = {fest_means[-1]:.4f} ± {fest_stds[-1]:.4f} ({len(fest_runs)} runs)")
-
-    if not N_values:
-        print("  [1.3] No valid data to plot <F_est> vs N.")
-        return
+    t_values = [MANUAL_T_EST_BY_N[N] for N in N_values]
 
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.errorbar(
+    ax.plot(
         N_values,
-        fest_means,
-        yerr=fest_stds,
-        fmt='o-',
-        linewidth=1.4,
+        t_values,
+        'o-',
+        linewidth=2.0,
         markersize=7,
-        capsize=5,
-        color='#6A1B9A',
-        ecolor='#CE93D8',
-        markerfacecolor='#8E24AA',
-        markeredgecolor='#4A148C',
-        label=r'$\langle F_{est} \rangle \pm \sigma$'
+        color='#FB8C00',
+        markerfacecolor='#FFB74D',
+        markeredgecolor='#E65100',
     )
 
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel(r'Fracción estacionaria media $\langle F_{est} \rangle$', fontsize=14)
-    ax.set_title(rf'Inciso 1.3: Resultado final $\langle F_{{est}} \rangle$ vs $N$ '
-                 rf'($t_{{est}}={t_stationary:g}$ s)', fontsize=16, fontweight='bold')
+    ax.set_ylabel(r'Tiempo estacionario $t_{est}$', fontsize=14)
+    ax.set_title(r'Inciso 1.3: $t_{est}$ en función de $N$',
+                 fontsize=16, fontweight='bold')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
+    ax.set_xticks(N_values)
     ax.set_ylim(bottom=0.0)
-    ax.legend(fontsize=11)
+
+    plt.tight_layout()
+    outpath = os.path.join(output_dir, 'inciso_1_3_t_est_vs_N.png')
+    plt.savefig(outpath, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  [1.3] Saved: {outpath}")
+
+
+def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
+    """Plot manual F_est values as a function of N."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    N_values = get_available_manual_N_values(files_by_N)
+    if not N_values:
+        print("  [1.3] No manual F_est values available for the loaded N set.")
+        return
+
+    f_values = [MANUAL_F_EST_BY_N[N] for N in N_values]
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.plot(
+        N_values,
+        f_values,
+        'o-',
+        linewidth=2.0,
+        markersize=7,
+        color='#D81B60',
+        markerfacecolor='#F48FB1',
+        markeredgecolor='#880E4F',
+    )
+
+    ax.set_xlabel('Número de partículas $N$', fontsize=14)
+    ax.set_ylabel(r'Valor estacionario $F_{est}$', fontsize=14)
+    ax.set_title(r'Inciso 1.3: $F_{est}$ en función de $N$',
+                 fontsize=16, fontweight='bold')
+    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.tick_params(axis='both', labelsize=12)
+    ax.set_xticks(N_values)
+    ax.set_ylim(bottom=0.0)
 
     plt.tight_layout()
     outpath = os.path.join(output_dir, 'inciso_1_3_fest_vs_N.png')
@@ -519,9 +393,10 @@ if __name__ == '__main__':
             sys.exit(1)
         files_by_N = group_entries_by_N(entries)
 
-        # Directory mode: one raw realization per N in a single figure.
-        plot_fraction_used_one_run_per_N(files_by_N)
-        plot_fest_vs_N(files_by_N, t_stationary=DEFAULT_T_STATIONARY)
+        for N in sorted(files_by_N.keys()):
+            plot_fraction_used_realizations(files_by_N[N])
+        plot_t_est_vs_N(files_by_N)
+        plot_f_est_vs_N(files_by_N)
 
     else:
         print(f"Error: '{path}' not found.")

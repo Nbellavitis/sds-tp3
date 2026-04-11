@@ -173,10 +173,11 @@ python graphics/plot_fraction_used.py data/                  # directorio
 ```
 
 - Muestra `F_u(t)` para todas las realizaciones de cada `N`, superpuestas en un mismo gráfico
+- Marca con líneas punteadas los valores manuales de `t_est` y `F_est` para cada `N`
 - **Genera:**
-  - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — `F_u(t)` cuando se procesa un archivo individual
-  - `graphics/output/inciso_1_3_fraction_used_one_run_per_N.png` — (modo directorio) una realización cruda por cada `N`, superpuestas en un único gráfico (sin promedio previo), con escala Y ampliada
-  - `graphics/output/inciso_1_3_fest_vs_N.png` — resultado final `\langle F_{est} \rangle` vs `N` con barras de error del ensamble (desvío estándar), calculando `F_{est}` para `t >= 400 s`
+  - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — `F_u(t)` para cada `N`, con realizaciones superpuestas
+  - `graphics/output/inciso_1_3_t_est_vs_N.png` — valores manuales de `t_est` en función de `N`
+  - `graphics/output/inciso_1_3_fest_vs_N.png` — valores manuales de `F_est` en función de `N`
 
 ---
 
