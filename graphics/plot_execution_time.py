@@ -18,6 +18,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+REQUIRED_T_FINAL_1_1 = 5.0
+
+
 def fit_exponential_model(x, y):
     """
     Fit y = A * exp(b x) using linear regression on log(y).
@@ -105,36 +108,51 @@ def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.
     return times_by_N
 
 
+def parse_time_from_file(timing_file):
+    """Parse one timing file with optional metadata header."""
+    times_by_N = {}
+    metadata = {}
+
+    if not os.path.exists(timing_file):
+        return times_by_N, metadata
+
+    with open(timing_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('#'):
+                for key, value in re.findall(r'([A-Za-z_]+)=([^\s,]+)', line):
+                    try:
+                        metadata[key] = float(value)
+                    except ValueError:
+                        metadata[key] = value
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            N = int(parts[0])
+            t = float(parts[1])
+            times_by_N.setdefault(N, []).append(t)
+
+    return times_by_N, metadata
+
+
 def parse_time_from_files(data_dir):
     """
     Alternative: parse execution times from a pre-generated timing file.
     Expected format: timing.txt with lines "N time_ms"
     """
-    timing_file = os.path.join(data_dir, "timing.txt")
-    times_by_N = {}
-    metadata = {}
-    
-    if os.path.exists(timing_file):
-        with open(timing_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith('#'):
-                    for key, value in re.findall(r'([A-Za-z_]+)=([^\s,]+)', line):
-                        try:
-                            metadata[key] = float(value)
-                        except ValueError:
-                            metadata[key] = value
-                    continue
-                if line:
-                    parts = line.split()
-                    N = int(parts[0])
-                    t = float(parts[1])
-                    if N not in times_by_N:
-                        times_by_N[N] = []
-                    times_by_N[N].append(t)
-    
+    preferred = os.path.join(data_dir, "timing_1_1.txt")
+    fallback = os.path.join(data_dir, "timing.txt")
+
+    if os.path.exists(preferred):
+        times_by_N, metadata = parse_time_from_file(preferred)
+        metadata["_timing_file"] = preferred
+        return times_by_N, metadata
+
+    times_by_N, metadata = parse_time_from_file(fallback)
+    metadata["_timing_file"] = fallback
     return times_by_N, metadata
 
 
@@ -152,11 +170,26 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
     # Try to read timing data
     times_by_N, timing_metadata = parse_time_from_files(data_dir)
     
+    timing_file = timing_metadata.get('_timing_file', os.path.join(data_dir, 'timing.txt'))
+
     if not times_by_N:
         print("  [1.1] No timing data found. Run simulations first or provide timing.txt")
         print("  [1.1] Format of timing.txt: one line per run with 'N time_ms'")
         return
-    
+
+    t_final = timing_metadata.get('t_final')
+    if not isinstance(t_final, (int, float)):
+        print(f"  [1.1] WARNING: {timing_file} has no t_final metadata. "
+              f"Inciso 1.1 requires t_f = {REQUIRED_T_FINAL_1_1:g} s.")
+        print("  [1.1] Re-generate timing with: python graphics/run_batch.py --for-1-1 --runs 5")
+        return
+
+    if abs(float(t_final) - REQUIRED_T_FINAL_1_1) > 1e-9:
+        print(f"  [1.1] WARNING: {timing_file} was generated with t_f={t_final:g} s. "
+              f"Inciso 1.1 requires t_f = {REQUIRED_T_FINAL_1_1:g} s.")
+        print("  [1.1] Re-generate timing with: python graphics/run_batch.py --for-1-1 --runs 5")
+        return
+
     N_values = sorted(times_by_N.keys())
     means = np.array([np.mean(times_by_N[n]) for n in N_values], dtype=float)
     stds = np.array([np.std(times_by_N[n]) for n in N_values], dtype=float)
@@ -179,16 +212,7 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=14)
     ax.set_yscale('log')
-    t_final = timing_metadata.get('t_final')
-    if isinstance(t_final, (int, float)):
-        if abs(float(t_final) - 5.0) > 1e-9:
-            print(f"  [1.1] WARNING: timing.txt was generated with t_f={t_final:g} s. "
-                  "La consigna de 1.1 pide t_f = 5 s.")
-            title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {t_final:g}$ s, fuera de consigna)'
-        else:
-            title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {t_final:g}$ s)'
-    else:
-        title = 'Inciso 1.1: Tiempo de ejecución vs $N$'
+    title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {float(t_final):g}$ s)'
     ax.set_title(title, fontsize=16, fontweight='bold')
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3, linestyle='--')

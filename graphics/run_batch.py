@@ -18,13 +18,13 @@ import re
 import argparse
 
 
-def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0):
+def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="timing.txt"):
     """
     Run the Java simulation for various N values and collect timing data.
     Writes timing.txt to data/ directory.
     """
     os.makedirs("data", exist_ok=True)
-    timing_file = os.path.join("data", "timing.txt")
+    timing_file = os.path.join("data", timing_filename)
 
     with open(timing_file, 'w') as tf:
         tf.write("# N time_ms\n")
@@ -108,7 +108,8 @@ def main():
     args = parser.parse_args()
 
     t_final = 5.0 if args.for_1_1 else args.t_final
-    run_batch(build_n_values(args), args.runs, args.seed, t_final)
+    timing_filename = "timing_1_1.txt" if args.for_1_1 else "timing.txt"
+    run_batch(build_n_values(args), args.runs, args.seed, t_final, timing_filename)
 
 
 if __name__ == '__main__':

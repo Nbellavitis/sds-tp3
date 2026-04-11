@@ -1,0 +1,165 @@
+                                      Simulación de Sistemas
+
+                   Trabajo Práctico Nro. 3: Simulación Dirigida por Eventos
+                       (Enunciado publicado en CAMPUS el 06/04/2026)
+
+
+Elegir uno de los dos sistemas descritos mas abajo para simular, analizar y presentar.
+
+Se recuerda que la simulación debe generar un output en formato de archivo de texto. Luego el
+módulo de animación se ejecuta en forma independiente tomando estos archivos de texto como
+input. De esta forma la velocidad de la animación no queda supeditada a la velocidad de la
+simulación.
+
+Los entregables del T.P. son:
+a- Presentación oral de 13 minutos de duración con las secciones indicadas en el documento
+".../Formato_Presentaciones.pdf".
+b- El documento de la presentación en formato pdf. En las diapositivas con animaciones debe verse
+un fotograma representativo de la misma con su respectivo link explícito a youtube o vimeo (NO
+enviar archivos de animaciones, ni por medio de links, ni subirlos a campus, ni embebidos en el
+pdf).
+c- Archivo .zip con el código fuente implementado. Unicamente incluir la versión final del motor de
+simulación (no incluir versiones previas, ni código de postprocesamiento, ni outputs, ni figuras, ni
+resultados, ni ninguna documentación extra). Este archivo debe ser menor a 100 KB.
+
+
+Al preparar los entregables, seguir los lineamientos establecidos en las Guías de Formato.
+
+Fecha y Forma de Entrega:
+
+La presentación en pdf (b) y el código fuente (c) deberán ser presentados a través de campus, antes
+del día 24/04/2026 a las 10 hs. Los archivos deben nombrarse de la siguiente manera:
+"SdS_TP3_2026Q1GXXCSS_Presentación" y "SdS_TP3_2026Q1GXXCSS_Codigo", donde
+XX es el número de grupo y SS es la comisión ("S" or "S2").
+Sistema 1) Scanning rate en recinto cerrado con obstáculo fijo
+
+Utilizar dinámica molecular regida por eventos para partículas que siguen en movimiento rectilíneo
+uniforme entre colisiones. Las simulaciones tendrán un te intrínseco variable que dependerá de
+cuando sucedan los eventos. Imprimir el estado del sistema (posiciones, velocidades y color de las
+partículas) en cada uno de estos te (o cada un número entero de eventos) para luego realizar
+animaciones y los correspondientes análisis.
+
+Considerar un dominio de simulación que consiste en un recinto circular de diámetro L = 80 m. En
+el centro se ubica un obstáculo fijo circular de radio r0 = 1 m como se ilustra en la Fig. 1.
+
+
+
+
+                                               L
+     Figura 1: Esquema del sistema a simular: Partículas que colisionan con un obstáculo fijo.
+
+
+Considerar N partículas de radio r = 1 m ubicadas dentro del recinto con velocidades de módulo
+v0 = 1 m/s y ángulo de las direcciones distribuidos uniformemente en el intervalo [0, 2π). Las masas
+de las partículas son m = 1 kg. El valor máximo de N debe ser tal que las simulaciones se completen
+en tiempos de cómputo razonables.
+
+1.1) Tiempo de ejecución en función de N.
+Simular el sistema durante un tiempo absoluto fijo tf = 5 s, para distintos números de partículas N
+(iguales entre sí). Graficar el tiempo de ejecución en función de N.
+
+1.2) Conteo de cambio de estado de las partículas.
+Considerar que todas las partículas iniciales están en estado "frescas" (verdes). Al colisionar con la
+partícula fija central se convierten en "usadas" (violetas). Luego, cuando una partícula usada
+colisiona con el borde se vuelve a convertir en fresca.
+Simular varias realizaciones para distintos N y en cada caso contabilizar Cfc(t) (número acumulado
+de partículas frescas que contactaron con el centro y cambiaron de estado). En cada caso, interpolar
+linealmente Cfc(t), su pendiente será J (el "scanning rate"). Finalmente, computar los promedios y
+desvíos estándar, a través de las realizaciones y graficar < J > (N) con su correspondiente barra de
+error.
+
+1.3) Evolución de la fracción de partículas usadas.
+Para las mismas simulaciones realizadas en (1.2). Estudiar la evolución temporal de la fracción de
+partículas usadas: Fu (t)=Nu (t) / N. Reportar tiempo al estacionario y valor del estacionario
+alcanzado (Fest) en función de N.
+1.4) Perfiles radiales de partículas frescas.
+
+Para las mismas simulaciones realizadas en (1.2), es decir para cada valor de N. Realizar el
+siguiente análisis.
+
+Sea S una variable radial que mide la distancia desde el centro de la partícula fija (que es igual al
+centro del sistema). Tomar capas concéntricas a la partícula fija central de ancho dS = 0.2 m. Sea el
+vector Rj la posición relativa de la partícula j al centro del sistema. Seleccionar sólo las partículas
+frescas Pfin cuya velocidad radial apunta hacia el centro, i.e.: Rj .vj < 0.
+
+Calcular la densidad promedio en cada capa S ( < ρfin > (S) ) a partir del número de partículas Pfin
+detectadas en esa capa y dividiendo por el área correspondiente de la capa. Promediar para los
+distintos tiempos registrados y para las distintas realizaciones. Explicar como se calculan estos
+promedios.
+
+Además, para esas mismas partículas Pfin , en cada capa S, calcular la velocidad promedio de estas
+en la dirección normal < vfin > (S), donde vfinj = (Rj .vj )/|Rj |. También en este caso, explicar como
+se calculan los promedios.
+Finalmente graficar < ρfin > (S), |< vfin > (S)| y el producto de ambos:
+Jin (S) = < ρfin > (S) |< vfin > (S)| , en total 3 curvas (pueden estar todas en la misma figura).
+Para la capa cercana a S=2, graficar Jin , < ρfin >, y < vfin > en función de N.
+
+
+Sistema 2) Filas inteligentes
+
+Considerar un recinto de 30×30 m2. Sobre alguno de sus bordes se ubica un conjunto de servidores,
+cuyo número podrá variar entre 1 y k. Dentro del recinto aparecen clientes, de acuerdo con un
+proceso de Poisson de tiempo medio t1, en posiciones aleatorias del plano como se muestra en la
+Fig.2.
+
+
+
+
+                                                S1 S2 S3 ...   Sk
+
+
+
+              Figura 2: Ejemplo de distribucón espacial de servidores, filas y clientes
+Al ingresar al sistema, cada cliente deberá elegir un servidor, o bien comunicarse con el conjunto de
+servidores para que el sistema le asigne uno. Esta asignación deberá realizarse de manera
+probabilística, teniendo en cuenta dos factores: la distancia entre el cliente y cada servidor, y la
+cantidad de personas en la fila asociada a cada servidor. Luego efectuar el sorteo correspondiente
+para decidir la asignación final. Cada grupo tiene libertad para proponer la forma funcional de estas
+probabilidades y la lógica de asignación de filas. Las cuales deberán ser suficientemente explicadas
+durante la presentación.
+Una vez asignado el servidor, deberá determinarse también la posición espacial que ocupará el
+cliente en el último lugar libre de la fila correspondiente. La creación del cliente y su asignación a
+un lugar en una fila, ocurren dentro del mismo evento. En el siguiente evento ese cliente se traslada
+hasta el lugar de la fila asignado, para ello usar un tiempo calculado como el cociente entre la
+distancia y una velocidad media de 1m/s.
+Se deberán implementar dos variantes de organización espacial de la fila:
+a) Fila guiada o predefinida, por ejemplo mediante una geometría tipo serpentina o laberinto. Esta
+geometría se la debe considerar como un input.
+b) Fila libre en el espacio, formada mediante alguna heurística propuesta por el grupo.
+Los tiempos de servicio de los servidores deberán seguir una distribución exponencial, con valor
+medio t2. Cuando un servidor finaliza la atención de un cliente, el mismo abandona el sistema y
+libera el servidor. El próximo evento será el arribo del cliente que sigue en la fila (ID 1) al servidor
+el cual ocurre en un tiempo igual a la distancia entre el lugar en la fila en la que estaba esperando y
+el servidor, divido 1 m/s. El espacio liberado por este cliente (ID1) que se ha desplazado será
+ocupado por el siguiente cliente (ID 2), el cual también tarda un tiempo en desplazarse lo que
+constituye el siguiente evento. Estos eventos de avance en la fila continúan mientras haya puestos
+libres hacia los cuales ir avanzando.
+Cada cliente deberá visualizarse con un color asociado a su ID, de modo de poder seguirlo a lo
+largo de su permanencia en el sistema. No se requiere movimiento continuo en el plano: el estado
+del sistema deberá registrarse únicamente en los tiempos en que ocurren los eventos.
+Se deberán implementar dos modalidades de funcionamiento:
+    • Modalidad A: una fila por servidor, con atención en paralelo.
+    • Modalidad B: una única fila compartida por todos los servidores.
+Para cada caso de estudio, calcular los siguientes observables:
+- El largo promedio de la(s) fila(s) en caso de que se llegue a un estacionario. Sino, reportar su tasa
+de crecimiento.
+- Distribución de tiempos de permanencia de cada cliente en el sistema, desde su llegada hasta su
+salida, para algunos ejemplos. Luego reportar los promedios en función del input estudiado.
+En todos los casos, el tiempo total de simulación de cada realización deberá ser de al menos 300 s.
+En los casos cercanos al umbral entre régimen estacionario y crecimiento indefinido, o cuando la
+identificación del comportamiento asintótico no sea clara, se deberá extender la simulación a al
+menos 1000 s.
+Mostrar animaciones para un ejemplo a elección, con k >1, del funcionamiento de los dos tipos de
+fila (libre o predefinida). Luego elegir uno de ellos y realizar los siguientes estudios:
+2.1) Considerando una fila por servidor, fijar t1=1 s y k=5, y variar t2 en el rango [1, 8]        para
+analizar los observables definidos previamente.
+2.2) Considerando una fila por servidor, fijar t2=3 s, k=5, y variar t1 en el rango [0.3, 3]s para
+analizar los observables definidos previamente.
+2.3) Considerando una fila por servidor, fijar t1=1 s y t2=3 s, variar k en el rango [1, 8] para
+analizar los observables definidos previamente.
+2.4) Repetir los puntos 2.1 a 2.3 para la modalidad una única fila compartida. Y comparar los
+resultados.
+2.5) Opcional. Fijar k=5 y variar simultáneamente t1 y t2. Construir mapas de calor del largo
+promedio de las filas o de su tasa de crecimiento cuando corresponda, y del tiempo promedio de
+permanencia de los clientes en el sistema.
+

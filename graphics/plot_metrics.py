@@ -15,7 +15,8 @@ from plot_execution_time import plot_execution_time
 from plot_scanning_rate import plot_scanning_rate
 from plot_fraction_used import (
     plot_fraction_used,
-    plot_fraction_used_realizations,
+    plot_fraction_used_one_run_per_N,
+    plot_fest_vs_N,
 )
 from plot_radial_profiles import plot_radial_profiles, plot_radial_profiles_ensemble, plot_at_S2_vs_N
 
@@ -63,8 +64,8 @@ def main():
         
         # 1.3 - Fraction used
         print("\n=== Inciso 1.3: Fraction Used ===")
-        for N in sorted(files_by_N.keys()):
-            plot_fraction_used_realizations(files_by_N[N], output_dir)
+        plot_fraction_used_one_run_per_N(files_by_N, output_dir)
+        plot_fest_vs_N(files_by_N, output_dir, t_stationary=400.0)
 
         # 1.4 - Radial profiles
         print("\n=== Inciso 1.4: Radial Profiles ===")

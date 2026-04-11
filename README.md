@@ -142,11 +142,11 @@ python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
 python graphics/plot_execution_time.py
 ```
 
-- **Requisito:** `data/timing.txt` (generado por `run_batch.py`)
+- **Requisito:** `data/timing_1_1.txt` (generado por `run_batch.py --for-1-1`)
 - La consigna de 1.1 usa `t_f = 5 s`
 - `--for-1-1` fija automáticamente `N = 50, 100, ..., Nmax` con paso `50` y `t_f = 5 s`
 - `--n-max` te deja elegir ese `N` máximo; por default vale `500`
-- El gráfico avisa si `timing.txt` fue generado con un `t_f` distinto de `5 s`
+- El gráfico de 1.1 solo usa archivos de timing con `t_f = 5 s` (si no, avisa y no grafica)
 - **Genera:** `graphics/output/inciso_1_1_execution_time.png`
 
 ---
@@ -174,7 +174,9 @@ python graphics/plot_fraction_used.py data/                  # directorio
 
 - Muestra `F_u(t)` para todas las realizaciones de cada `N`, superpuestas en un mismo gráfico
 - **Genera:**
-  - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — realizaciones de `F_u(t)` para cada `N`
+  - `graphics/output/inciso_1_3_fraction_used_N<N>.png` — `F_u(t)` cuando se procesa un archivo individual
+  - `graphics/output/inciso_1_3_fraction_used_one_run_per_N.png` — (modo directorio) una realización cruda por cada `N`, superpuestas en un único gráfico (sin promedio previo), con escala Y ampliada
+  - `graphics/output/inciso_1_3_fest_vs_N.png` — resultado final `\langle F_{est} \rangle` vs `N` con barras de error del ensamble (desvío estándar), calculando `F_{est}` para `t >= 400 s`
 
 ---
 
