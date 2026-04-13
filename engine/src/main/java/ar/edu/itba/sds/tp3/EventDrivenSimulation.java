@@ -25,6 +25,8 @@ public class EventDrivenSimulation {
     private static final double PARTICLE_MASS = 1.0;         // m = 1 kg
     private static final double V0 = 1.0;                    // initial speed [m/s]
     private static final double DEFAULT_T_FINAL = 5.0;       // default simulation end time [s]
+    private static final double TIMING_WINDOW_1_1 = 5.0;     // simulated seconds measured for inciso 1.1
+    private static final int SNAPSHOT_EVERY_EVENTS = 10;     // keep one snapshot every N processed collisions
 
     // ── Data ─────────────────────────────────────────────────────────────
     private final int N;
@@ -37,6 +39,31 @@ public class EventDrivenSimulation {
 
     // ── Metrics ──────────────────────────────────────────────────────────
     private int totalCollisions;
+    private double lastSnapshotTime;
+
+    public static final class RunTimings {
+        private final long totalElapsedNs;
+        private final long elapsedToTimingWindowNs;
+        private final double timingWindow;
+
+        private RunTimings(long totalElapsedNs, long elapsedToTimingWindowNs, double timingWindow) {
+            this.totalElapsedNs = totalElapsedNs;
+            this.elapsedToTimingWindowNs = elapsedToTimingWindowNs;
+            this.timingWindow = timingWindow;
+        }
+
+        public long getTotalElapsedNs() {
+            return totalElapsedNs;
+        }
+
+        public long getElapsedToTimingWindowNs() {
+            return elapsedToTimingWindowNs;
+        }
+
+        public double getTimingWindow() {
+            return timingWindow;
+        }
+    }
 
     public EventDrivenSimulation(int N, long seed, double tFinal) {
         this.N = N;
@@ -46,6 +73,7 @@ public class EventDrivenSimulation {
         this.random = new Random(seed);
         this.tFinal = tFinal;
         this.totalCollisions = 0;
+        this.lastSnapshotTime = Double.NaN;
 
         // Generate unique filename with timestamp and seed
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
@@ -121,11 +149,13 @@ public class EventDrivenSimulation {
     }
 
     // ── Run the simulation ───────────────────────────────────────────────
-    public long run() {
+    public RunTimings run() {
         // Ensure data directory exists
         new File("data").mkdirs();
 
         long startWall = System.nanoTime();
+        double timingWindow = Math.min(TIMING_WINDOW_1_1, tFinal);
+        long elapsedToTimingWindowNs = -1L;
 
         // Initialize PQ with all events
         for (int i = 0; i < N; i++) {
@@ -138,7 +168,8 @@ public class EventDrivenSimulation {
             // Write metadata header
             writer.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
                     + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
-                    + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal);
+                    + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal
+                    + " snapshot_every_events=" + SNAPSHOT_EVERY_EVENTS);
             writer.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
             writer.println("# then N lines of: id x y vx vy state(F/U)");
             writer.println("# EVENT lines start with 'E': time id");
@@ -153,46 +184,53 @@ public class EventDrivenSimulation {
                 // Skip invalid (stale) events
                 if (!event.isValid()) continue;
 
+                if (elapsedToTimingWindowNs < 0 && currentTime < timingWindow && event.getTime() > timingWindow) {
+                    advanceAllParticles(timingWindow - currentTime);
+                    currentTime = timingWindow;
+                    elapsedToTimingWindowNs = System.nanoTime() - startWall;
+                }
+
                 // Event time beyond simulation end
                 if (event.getTime() > tFinal) break;
 
                 // Advance all particles to event time
                 double dt = event.getTime() - currentTime;
-                if (dt > 0) {
-                    for (Particle p : particles) {
-                        p.advance(dt);
-                    }
-                    currentTime = event.getTime();
+                advanceAllParticles(dt);
+                currentTime = event.getTime();
+                if (elapsedToTimingWindowNs < 0 && currentTime >= timingWindow) {
+                    elapsedToTimingWindowNs = System.nanoTime() - startWall;
                 }
 
                 // Process event
+                boolean processedCollision = false;
                 switch (event.getType()) {
                     case PARTICLE_PARTICLE -> {
                         Particle a = event.getA();
                         Particle b = event.getB();
                         a.resolveCollision(b);
                         totalCollisions++;
+                        processedCollision = true;
 
                         // Re-predict events for both particles
                         int ia = findIndex(a);
                         int ib = findIndex(b);
                         predictEvents(ia);
                         predictEvents(ib);
-                        writeSnapshot(writer);
                     }
                     case PARTICLE_OUTER_WALL -> {
                         Particle a = event.getA();
                         a.resolveOuterWallCollision(); // sets state to FRESH
                         totalCollisions++;
+                        processedCollision = true;
 
                         int ia = findIndex(a);
                         predictEvents(ia);
-                        writeSnapshot(writer);
                     }
                     case PARTICLE_OBSTACLE -> {
                         Particle a = event.getA();
                         boolean wasFreshToUsed = a.resolveObstacleCollision();
                         totalCollisions++;
+                        processedCollision = true;
 
                         // Log F->U transition for C_fc counting
                         if (wasFreshToUsed) {
@@ -201,22 +239,29 @@ public class EventDrivenSimulation {
 
                         int ia = findIndex(a);
                         predictEvents(ia);
-                        writeSnapshot(writer);
                     }
                     case SNAPSHOT -> {
                         // Snapshot events are no longer scheduled. Keep the case
                         // to avoid surprising future callers if they are reintroduced.
                     }
                 }
+
+                if (processedCollision && totalCollisions % SNAPSHOT_EVERY_EVENTS == 0) {
+                    writeSnapshot(writer);
+                }
             }
 
             // Final snapshot
             if (currentTime < tFinal) {
-                double dt = tFinal - currentTime;
-                for (Particle p : particles) {
-                    p.advance(dt);
-                }
+                advanceAllParticles(tFinal - currentTime);
                 currentTime = tFinal;
+            }
+
+            if (elapsedToTimingWindowNs < 0 && currentTime >= timingWindow) {
+                elapsedToTimingWindowNs = System.nanoTime() - startWall;
+            }
+
+            if (Double.isNaN(lastSnapshotTime) || Math.abs(lastSnapshotTime - currentTime) > 1e-12) {
                 writeSnapshot(writer);
             }
 
@@ -226,7 +271,11 @@ public class EventDrivenSimulation {
         }
 
         long endWall = System.nanoTime();
-        return (endWall - startWall); // nanoseconds
+        long totalElapsedNs = endWall - startWall;
+        if (elapsedToTimingWindowNs < 0) {
+            elapsedToTimingWindowNs = totalElapsedNs;
+        }
+        return new RunTimings(totalElapsedNs, elapsedToTimingWindowNs, timingWindow);
     }
 
     // ── Write snapshot of all particles ──────────────────────────────────
@@ -236,6 +285,16 @@ public class EventDrivenSimulation {
             writer.printf("%d %.6e %.6e %.6e %.6e %s%n",
                     p.getId(), p.getX(), p.getY(), p.getVx(), p.getVy(),
                     p.getState() == Particle.State.FRESH ? "F" : "U");
+        }
+        lastSnapshotTime = currentTime;
+    }
+
+    private void advanceAllParticles(double dt) {
+        if (dt <= 0.0) {
+            return;
+        }
+        for (Particle p : particles) {
+            p.advance(dt);
         }
     }
 
@@ -281,10 +340,13 @@ public class EventDrivenSimulation {
             System.out.println("--- Run " + (run + 1) + "/" + runs + " (seed=" + actualSeed + ") ---");
 
             EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal);
-            long elapsedNs = sim.run();
-            double elapsedMs = elapsedNs / 1e6;
+            RunTimings timings = sim.run();
+            double elapsedMs = timings.getTotalElapsedNs() / 1e6;
+            double timingWindowMs = timings.getElapsedToTimingWindowNs() / 1e6;
 
-            System.out.printf("  Completed in %.2f ms (%.4f s)%n", elapsedMs, elapsedMs / 1000.0);
+            System.out.printf("  Completed first %.2f simulated seconds in %.2f ms (%.4f s)%n",
+                    timings.getTimingWindow(), timingWindowMs, timingWindowMs / 1000.0);
+            System.out.printf("  Completed full run in %.2f ms (%.4f s)%n", elapsedMs, elapsedMs / 1000.0);
             System.out.println("  Total collisions: " + sim.totalCollisions);
             System.out.println("  Output: " + sim.outputFilePath);
             System.out.println();

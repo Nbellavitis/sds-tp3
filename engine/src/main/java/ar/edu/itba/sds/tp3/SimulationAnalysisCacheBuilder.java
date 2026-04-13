@@ -26,7 +26,7 @@ import java.util.zip.GZIPOutputStream;
 public class SimulationAnalysisCacheBuilder {
 
     private static final double DEFAULT_DS = 0.2;
-    private static final String CACHE_SUFFIX = ".analysis.v1.json.gz";
+    private static final String CACHE_SUFFIX = ".analysis.v2.json.gz";
 
     private static final class SnapshotFrame {
         private final double time;
@@ -62,16 +62,14 @@ public class SimulationAnalysisCacheBuilder {
     }
 
     private static final class RunningProfiles {
-        private final double[] countTime;
-        private final double[] velocityTimeSum;
-        private final double[] particleTime;
-        private double totalTime;
+        private final double[] countSum;
+        private final double[] velocitySum;
+        private int snapshotCount;
 
         private RunningProfiles(int nShells) {
-            this.countTime = new double[nShells];
-            this.velocityTimeSum = new double[nShells];
-            this.particleTime = new double[nShells];
-            this.totalTime = 0.0;
+            this.countSum = new double[nShells];
+            this.velocitySum = new double[nShells];
+            this.snapshotCount = 0;
         }
     }
 
@@ -98,6 +96,10 @@ public class SimulationAnalysisCacheBuilder {
         private final double[] fuTimes;
         private final double[] fuValues;
         private final double[] shellCenters;
+        private final double[] shellAreas;
+        private final double snapshotCount;
+        private final double[] radialCountSum;
+        private final double[] radialVelocitySum;
         private final double[] rhoValues;
         private final double[] vValues;
         private final double[] jValues;
@@ -106,8 +108,9 @@ public class SimulationAnalysisCacheBuilder {
                                Map<String, Double> metadata,
                                double[] cfcTimes, double[] cfcValues, LinearFit cfcFit,
                                double[] fuTimes, double[] fuValues,
-                               double[] shellCenters, double[] rhoValues,
-                               double[] vValues, double[] jValues) {
+                               double[] shellCenters, double[] shellAreas, double snapshotCount,
+                               double[] radialCountSum, double[] radialVelocitySum,
+                               double[] rhoValues, double[] vValues, double[] jValues) {
             this.sourcePath = sourcePath;
             this.sourceSize = sourceSize;
             this.sourceMtime = sourceMtime;
@@ -118,6 +121,10 @@ public class SimulationAnalysisCacheBuilder {
             this.fuTimes = fuTimes;
             this.fuValues = fuValues;
             this.shellCenters = shellCenters;
+            this.shellAreas = shellAreas;
+            this.snapshotCount = snapshotCount;
+            this.radialCountSum = radialCountSum;
+            this.radialVelocitySum = radialVelocitySum;
             this.rhoValues = rhoValues;
             this.vValues = vValues;
             this.jValues = jValues;
@@ -232,15 +239,12 @@ public class SimulationAnalysisCacheBuilder {
                     SnapshotFrame currentFrame = parseSnapshot(trimmed, reader, N);
                     fuTimes.add(currentFrame.time);
                     fuValues.add(currentFrame.usedCount / (double) N);
+                    accumulateRadialProfiles(currentFrame, shellGeometry, runningProfiles);
 
                     if (previousFrame == null) {
                         fallbackCfcTimes.add(currentFrame.time);
                         fallbackCfcValues.add(0.0);
                     } else {
-                        double dt = currentFrame.time - previousFrame.time;
-                        if (dt > 0.0) {
-                            accumulateRadialProfiles(previousFrame, dt, shellGeometry, runningProfiles);
-                        }
                         fallbackCumulative += countFreshToUsedTransitions(previousFrame.used, currentFrame.used);
                         fallbackCfcTimes.add(currentFrame.time);
                         fallbackCfcValues.add((double) fallbackCumulative);
@@ -278,11 +282,11 @@ public class SimulationAnalysisCacheBuilder {
         double[] vValues = new double[shellGeometry.centers.length];
         double[] jValues = new double[shellGeometry.centers.length];
 
-        if (runningProfiles.totalTime > 0.0) {
+        if (runningProfiles.snapshotCount > 0) {
             for (int i = 0; i < shellGeometry.centers.length; i++) {
-                rhoValues[i] = runningProfiles.countTime[i] / (runningProfiles.totalTime * shellGeometry.areas[i]);
-                if (runningProfiles.particleTime[i] > 1e-12) {
-                    vValues[i] = runningProfiles.velocityTimeSum[i] / runningProfiles.particleTime[i];
+                rhoValues[i] = runningProfiles.countSum[i] / (runningProfiles.snapshotCount * shellGeometry.areas[i]);
+                if (runningProfiles.countSum[i] > 1e-12) {
+                    vValues[i] = runningProfiles.velocitySum[i] / runningProfiles.countSum[i];
                 } else {
                     vValues[i] = 0.0;
                 }
@@ -301,6 +305,10 @@ public class SimulationAnalysisCacheBuilder {
                 toDoubleArray(fuTimes),
                 toDoubleArray(fuValues),
                 shellGeometry.centers,
+                shellGeometry.areas,
+                runningProfiles.snapshotCount,
+                runningProfiles.countSum,
+                runningProfiles.velocitySum,
                 rhoValues,
                 vValues,
                 jValues
@@ -393,15 +401,8 @@ public class SimulationAnalysisCacheBuilder {
         return new ShellGeometry(edges, centers, areas);
     }
 
-    private static void accumulateRadialProfiles(SnapshotFrame frame, double dt, ShellGeometry geometry,
+    private static void accumulateRadialProfiles(SnapshotFrame frame, ShellGeometry geometry,
                                                  RunningProfiles runningProfiles) {
-        if (dt <= 0.0) {
-            return;
-        }
-
-        double[] counts = new double[geometry.centers.length];
-        double[] velocitySum = new double[geometry.centers.length];
-
         for (int i = 0; i < frame.x.length; i++) {
             if (frame.used[i]) {
                 continue;
@@ -426,16 +427,10 @@ public class SimulationAnalysisCacheBuilder {
             shellIndex = Math.max(0, Math.min(shellIndex, geometry.centers.length - 1));
             double vfIn = radialDistance > 1e-10 ? rdotv / radialDistance : 0.0;
 
-            counts[shellIndex] += 1.0;
-            velocitySum[shellIndex] += vfIn;
+            runningProfiles.countSum[shellIndex] += 1.0;
+            runningProfiles.velocitySum[shellIndex] += vfIn;
         }
-
-        for (int shellIndex = 0; shellIndex < geometry.centers.length; shellIndex++) {
-            runningProfiles.countTime[shellIndex] += dt * counts[shellIndex];
-            runningProfiles.velocityTimeSum[shellIndex] += dt * velocitySum[shellIndex];
-            runningProfiles.particleTime[shellIndex] += dt * counts[shellIndex];
-        }
-        runningProfiles.totalTime += dt;
+        runningProfiles.snapshotCount++;
     }
 
     private static int upperBound(double[] values, double target) {
@@ -558,7 +553,14 @@ public class SimulationAnalysisCacheBuilder {
             writer.println("  },");
             writer.println("  \"radial_profiles\": {");
             writer.printf(Locale.US, "    \"dS\": %.17g,%n", dS);
+            writer.printf(Locale.US, "    \"snapshot_count\": %.17g,%n", result.snapshotCount);
             writeArray(writer, "S_centers", result.shellCenters, "    ");
+            writer.println(",");
+            writeArray(writer, "shell_areas", result.shellAreas, "    ");
+            writer.println(",");
+            writeArray(writer, "count_sum", result.radialCountSum, "    ");
+            writer.println(",");
+            writeArray(writer, "vf_in_sum", result.radialVelocitySum, "    ");
             writer.println(",");
             writeArray(writer, "rho", result.rhoValues, "    ");
             writer.println(",");

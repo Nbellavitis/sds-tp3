@@ -18,6 +18,29 @@ import re
 import argparse
 
 
+TIMING_WINDOW_1_1 = 5.0
+
+
+def parse_measured_time_ms(stdout):
+    """Prefer the time to the first 5 simulated seconds, then fall back to full runtime."""
+    timing_window_match = re.search(
+        r'Completed first\s+([\d.]+)\s+simulated seconds in\s+([\d.]+)\s*ms',
+        stdout,
+    )
+    if timing_window_match:
+        return float(timing_window_match.group(1)), float(timing_window_match.group(2))
+
+    full_run_match = re.search(r'Completed in\s+([\d.]+)\s*ms', stdout)
+    if full_run_match:
+        return None, float(full_run_match.group(1))
+
+    full_run_match = re.search(r'Completed full run in\s+([\d.]+)\s*ms', stdout)
+    if full_run_match:
+        return None, float(full_run_match.group(1))
+
+    return None, None
+
+
 def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="timing.txt"):
     """
     Run the Java simulation for various N values and collect timing data.
@@ -25,10 +48,14 @@ def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="
     """
     os.makedirs("data", exist_ok=True)
     timing_file = os.path.join("data", timing_filename)
+    measurement_window = min(TIMING_WINDOW_1_1, t_final)
 
     with open(timing_file, 'w') as tf:
         tf.write("# N time_ms\n")
-        tf.write(f"# runs_per_n={runs_per_n}, seed_base={seed_base}, t_final={t_final}\n")
+        tf.write(
+            f"# runs_per_n={runs_per_n}, seed_base={seed_base}, "
+            f"sim_t_final={t_final}, measurement_window_s={measurement_window}\n"
+        )
     
     for N in n_values:
         for run in range(runs_per_n):
@@ -48,17 +75,15 @@ def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="
                 continue
             
             # Parse execution time
-            time_ms = None
-            for line in result.stdout.split('\n'):
-                if 'Completed in' in line:
-                    match = re.search(r'([\d.]+)\s*ms', line)
-                    if match:
-                        time_ms = float(match.group(1))
+            measured_window_s, time_ms = parse_measured_time_ms(result.stdout)
             
             if time_ms is not None:
                 with open(timing_file, 'a') as tf:
                     tf.write(f"{N} {time_ms:.2f}\n")
-                print(f"  Completed: {time_ms:.2f} ms")
+                if measured_window_s is not None:
+                    print(f"  Completed: {time_ms:.2f} ms hasta t={measured_window_s:g} s simulados")
+                else:
+                    print(f"  Completed: {time_ms:.2f} ms")
             else:
                 print(f"  WARNING: Could not parse timing from output")
                 print(f"  stdout: {result.stdout[:200]}")

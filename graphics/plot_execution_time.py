@@ -15,37 +15,12 @@ import re
 import subprocess
 import argparse
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-REQUIRED_T_FINAL_1_1 = 5.0
-
-
-def fit_exponential_model(x, y):
-    """
-    Fit y = A * exp(b x) using linear regression on log(y).
-    """
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    positive = y > 0
-    if np.count_nonzero(positive) < 2:
-        return None
-
-    log_y = np.log(y[positive])
-    coeffs = np.polyfit(x[positive], log_y, 1)
-    b = coeffs[0]
-    log_a = coeffs[1]
-    y_fit = np.exp(log_a + b * x)
-    ss_res = np.sum((log_y - (log_a + b * x[positive])) ** 2)
-    ss_tot = np.sum((log_y - np.mean(log_y)) ** 2)
-    r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-
-    return {
-        "A": float(np.exp(log_a)),
-        "b": float(b),
-        "y_fit": y_fit,
-        "r_squared_log": float(r_squared),
-    }
+REQUIRED_MEASUREMENT_WINDOW_1_1 = 5.0
 
 
 def fit_power_law_model(x, y):
@@ -99,11 +74,17 @@ def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
             
             # Parse execution time from output
-            for line in result.stdout.split('\n'):
-                if 'Completed in' in line:
-                    match = re.search(r'(\d+\.?\d*)\s*ms', line)
-                    if match:
-                        times_by_N[N].append(float(match.group(1)))
+            window_match = re.search(
+                r'Completed first\s+[\d.]+\s+simulated seconds in\s+(\d+\.?\d*)\s*ms',
+                result.stdout,
+            )
+            if window_match:
+                times_by_N[N].append(float(window_match.group(1)))
+                continue
+
+            full_run_match = re.search(r'Completed full run in\s+(\d+\.?\d*)\s*ms', result.stdout)
+            if full_run_match:
+                times_by_N[N].append(float(full_run_match.group(1)))
     
     return times_by_N
 
@@ -177,44 +158,50 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
         print("  [1.1] Format of timing.txt: one line per run with 'N time_ms'")
         return
 
-    t_final = timing_metadata.get('t_final')
-    if not isinstance(t_final, (int, float)):
-        print(f"  [1.1] WARNING: {timing_file} has no t_final metadata. "
-              f"Inciso 1.1 requires t_f = {REQUIRED_T_FINAL_1_1:g} s.")
-        print("  [1.1] Re-generate timing with: python graphics/run_batch.py --for-1-1 --runs 5")
-        return
+    measurement_window = timing_metadata.get('measurement_window_s')
+    sim_t_final = timing_metadata.get('sim_t_final', timing_metadata.get('t_final'))
 
-    if abs(float(t_final) - REQUIRED_T_FINAL_1_1) > 1e-9:
-        print(f"  [1.1] WARNING: {timing_file} was generated with t_f={t_final:g} s. "
-              f"Inciso 1.1 requires t_f = {REQUIRED_T_FINAL_1_1:g} s.")
-        print("  [1.1] Re-generate timing with: python graphics/run_batch.py --for-1-1 --runs 5")
+    if not isinstance(measurement_window, (int, float)):
+        if isinstance(sim_t_final, (int, float)) and abs(float(sim_t_final) - REQUIRED_MEASUREMENT_WINDOW_1_1) <= 1e-9:
+            measurement_window = float(sim_t_final)
+        else:
+            print(f"  [1.1] WARNING: {timing_file} has no compatible measurement-window metadata.")
+            print(f"  [1.1] Inciso 1.1 requires tiempos medidos hasta t={REQUIRED_MEASUREMENT_WINDOW_1_1:g} s simulados.")
+            print("  [1.1] Re-generate timing with run_batch.py usando t_final >= 5 s.")
+            return
+
+    if abs(float(measurement_window) - REQUIRED_MEASUREMENT_WINDOW_1_1) > 1e-9:
+        print(f"  [1.1] WARNING: {timing_file} was generated with measurement_window_s={measurement_window:g}.")
+        print(f"  [1.1] Inciso 1.1 requires t={REQUIRED_MEASUREMENT_WINDOW_1_1:g} s simulados.")
         return
 
     N_values = sorted(times_by_N.keys())
     means = np.array([np.mean(times_by_N[n]) for n in N_values], dtype=float)
     stds = np.array([np.std(times_by_N[n]) for n in N_values], dtype=float)
     N_array = np.array(N_values, dtype=float)
-    exp_fit = fit_exponential_model(N_array, means)
     power_fit = fit_power_law_model(N_array, means)
     
     # ── Plot ──────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(10, 7))
     
-    ax.errorbar(N_values, means, yerr=stds, fmt='o-', capsize=5,
-                color='#2196F3', ecolor='#90CAF9', markerfacecolor='#1565C0',
-                markeredgecolor='#0D47A1', markersize=8, linewidth=2,
-                label='Tiempo medio ± σ')
-    if exp_fit is not None:
-        ax.plot(N_array, exp_fit["y_fit"], '--', color='#D81B60', linewidth=2,
-                label=(r'Ajuste exp.: $T(N)\approx %.2f\,e^{%.4fN}$'
-                       % (exp_fit["A"], exp_fit["b"])))
+    ax.errorbar(
+        N_values,
+        means,
+        yerr=stds,
+        fmt='o-',
+        capsize=5,
+        color='#2196F3',
+        ecolor='#90CAF9',
+        markerfacecolor='#1565C0',
+        markeredgecolor='#0D47A1',
+        markersize=8,
+        linewidth=2,
+    )
 
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=14)
     ax.set_yscale('log')
-    title = f'Inciso 1.1: Tiempo de ejecución vs $N$ ($t_f = {float(t_final):g}$ s)'
-    ax.set_title(title, fontsize=16, fontweight='bold')
-    ax.legend(fontsize=12)
+    ax.set_title(rf'Tiempo medido hasta $t={measurement_window:g}$ s simulados', fontsize=14)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
     plt.tight_layout()
@@ -223,9 +210,8 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
     plt.close()
     print(f"  [1.1] Saved: {outpath}")
 
-    if exp_fit is not None:
-        print(f"  [1.1] Exponential fit: T(N) ≈ {exp_fit['A']:.3f} * exp({exp_fit['b']:.5f} N)"
-              f" with R²(log-space) = {exp_fit['r_squared_log']:.4f}")
+    if isinstance(sim_t_final, (int, float)) and float(sim_t_final) > float(measurement_window) + 1e-9:
+        print(f"  [1.1] Se usaron los primeros {measurement_window:g} s simulados de corridas con t_final={float(sim_t_final):g} s.")
     if power_fit is not None:
         print(f"  [1.1] Power-law fit: T(N) ≈ {power_fit['C']:.5f} * N^{power_fit['alpha']:.3f}"
               f" with R²(log-log) = {power_fit['r_squared_loglog']:.4f}")

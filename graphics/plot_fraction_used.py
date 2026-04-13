@@ -9,7 +9,7 @@ Per the enunciado:
 This script generates:
 1. F_u(t) vs t for one simulation when a single file is provided
 2. F_u(t) vs t for all realizations of each N when a directory is provided
-3. Manual summary plots for t_est(N) and F_est(N)
+3. Summary plots for t_est(N) and F_est(N)
 
 Usage:
     python graphics/plot_fraction_used.py data/sim_300N_20260409_235938_s42.txt
@@ -18,13 +18,16 @@ Usage:
 
 import sys
 import os
-import glob
-import re
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
+
+
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
 
 
 MANUAL_T_EST_BY_N = {
@@ -35,16 +38,6 @@ MANUAL_T_EST_BY_N = {
     250: 400.0,
     300: 400.0,
 }
-
-MANUAL_F_EST_BY_N = {
-    50: 0.06,
-    100: 0.08,
-    150: 0.09,
-    200: 0.11,
-    250: 0.12,
-    300: 0.13,
-}
-
 
 def parse_simulation_file(filepath):
     """Parse simulation file. Returns metadata, snapshots, events."""
@@ -116,12 +109,8 @@ def compute_fraction_used(snapshots, N):
     return np.array(times), np.array(fu)
 
 
-def describe_run(fpath, run_index):
+def describe_run(_fpath, run_index):
     """Build a readable label for one realization."""
-    basename = os.path.basename(fpath)
-    seed_match = re.search(r'_s(\d+)\.txt$', basename)
-    if seed_match:
-        return f'Realizacion {run_index} (seed={seed_match.group(1)})'
     return f'Realizacion {run_index}'
 
 
@@ -162,14 +151,43 @@ def get_fraction_ylim(fu, fu_std=None):
     return 0.0, float(ymax), float(step)
 
 
-def get_manual_stationary_values(N):
-    """Return manually assigned stationary values for one N."""
-    return MANUAL_T_EST_BY_N.get(N), MANUAL_F_EST_BY_N.get(N)
+def normalize_entries(entries_or_entry):
+    """Always return a list of analysis entries."""
+    if entries_or_entry is None:
+        return []
+    if isinstance(entries_or_entry, dict):
+        return [entries_or_entry]
+    return list(entries_or_entry)
 
 
-def add_stationary_reference_lines(ax, N):
-    """Draw manual t_est and F_est references when available."""
-    t_est, f_est = get_manual_stationary_values(N)
+def compute_f_est_from_entries(entries_or_entry, t_est):
+    """Average all sampled F_u values with t >= t_est."""
+    if t_est is None:
+        return None
+
+    stationary_values = []
+    for entry in normalize_entries(entries_or_entry):
+        times, fu = extract_fu_series(entry)
+        if len(times) == 0:
+            continue
+        stationary_values.extend(fu[times >= t_est].tolist())
+
+    if not stationary_values:
+        return None
+
+    return float(np.mean(stationary_values))
+
+
+def get_stationary_values(entries_or_entry, N):
+    """Return manual t_est and data-driven F_est for one N."""
+    t_est = MANUAL_T_EST_BY_N.get(N)
+    f_est = compute_f_est_from_entries(entries_or_entry, t_est)
+    return t_est, f_est
+
+
+def add_stationary_reference_lines(ax, N, entries_or_entry):
+    """Draw manual t_est and data-driven F_est references when available."""
+    t_est, f_est = get_stationary_values(entries_or_entry, N)
 
     if f_est is not None:
         ax.axhline(
@@ -217,16 +235,14 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
 
     ax.step(times, fu, where='post', color='#5E35B1', linewidth=2.0,
             label='$F_u(t)$')
-    t_est, f_est = add_stationary_reference_lines(ax, N)
+    t_est, f_est = add_stationary_reference_lines(ax, N, entry)
     
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
-    ax.set_title(f'Inciso 1.3: Evolución temporal de $F_u(t)$ ($N={N}$)',
-                 fontsize=16, fontweight='bold')
     ax.legend(fontsize=11, loc='upper left')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ylim_samples = np.array([0.0, float(np.max(fu)), f_est or 0.0])
+    ylim_samples = np.array([0.0, float(np.max(fu)), f_est if f_est is not None else 0.0])
     ymin, ymax, ystep = get_fraction_ylim(ylim_samples)
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(times[0], times[-1])
@@ -237,7 +253,7 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
-    print(f"  [1.3] N={N}: gráfico temporal de F_u(t) con referencias manuales t_est={t_est} y F_est={f_est}.")
+    print(f"  [1.3] N={N}: gráfico temporal de F_u(t) con t_est={t_est} y F_est={f_est} calculado promediando F_u(t>=t_est).")
 
 
 def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
@@ -256,7 +272,6 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     fig, ax = plt.subplots(figsize=(13, 7))
 
     for run_index, entry in enumerate(entries, start=1):
-        fpath = entry["source_path"]
         times, fu = extract_fu_series(entry)
         if len(times) == 0:
             continue
@@ -264,20 +279,17 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
         t_max = max(t_max, float(times[-1]))
         ax.step(times, fu, where='post', alpha=0.85, linewidth=1.6,
                 color=colors[run_index - 1],
-                label=f'{describe_run(fpath, run_index)}: $F_u(t)$')
+                label=describe_run(entry["source_path"], run_index))
 
-    t_est, f_est = add_stationary_reference_lines(ax, N)
+    t_est, f_est = add_stationary_reference_lines(ax, N, entries)
 
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
-    ax.set_title(f'Inciso 1.3: $F_u(t)$ para $N={N}$\n'
-                 f'{n_runs} realizaciones superpuestas',
-                 fontsize=16, fontweight='bold')
     ax.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
               borderaxespad=0.0)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
-    ylim_samples = np.array([0.0, max_fu, f_est or 0.0])
+    ylim_samples = np.array([0.0, max_fu, f_est if f_est is not None else 0.0])
     ymin, ymax, ystep = get_fraction_ylim(ylim_samples)
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(0.0, t_max)
@@ -288,14 +300,14 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
-    print(f"  [1.3] N={N}: gráfico con {n_runs} realizaciones superpuestas y referencias t_est={t_est}, F_est={f_est}.")
+    print(f"  [1.3] N={N}: gráfico con {n_runs} realizaciones superpuestas y F_est={f_est} calculado como promedio de F_u(t>=t_est).")
 
 
 def get_available_manual_N_values(files_by_N):
-    """Return N values present in the data and in both manual estimate tables."""
+    """Return N values present in the data and with an available manual t_est."""
     return [
         N for N in sorted(files_by_N.keys())
-        if N in MANUAL_T_EST_BY_N and N in MANUAL_F_EST_BY_N
+        if N in MANUAL_T_EST_BY_N
     ]
 
 
@@ -324,8 +336,6 @@ def plot_t_est_vs_N(files_by_N, output_dir="graphics/output"):
 
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel(r'Tiempo estacionario $t_{est}$', fontsize=14)
-    ax.set_title(r'Inciso 1.3: $t_{est}$ en función de $N$',
-                 fontsize=16, fontweight='bold')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
     ax.set_xticks(N_values)
@@ -339,15 +349,26 @@ def plot_t_est_vs_N(files_by_N, output_dir="graphics/output"):
 
 
 def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
-    """Plot manual F_est values as a function of N."""
+    """Plot data-driven F_est values as a function of N."""
     os.makedirs(output_dir, exist_ok=True)
 
-    N_values = get_available_manual_N_values(files_by_N)
-    if not N_values:
-        print("  [1.3] No manual F_est values available for the loaded N set.")
+    candidate_N_values = get_available_manual_N_values(files_by_N)
+    if not candidate_N_values:
+        print("  [1.3] No manual t_est values available for the loaded N set.")
         return
 
-    f_values = [MANUAL_F_EST_BY_N[N] for N in N_values]
+    N_values = []
+    f_values = []
+    for N in candidate_N_values:
+        f_est = compute_f_est_from_entries(files_by_N[N], MANUAL_T_EST_BY_N[N])
+        if f_est is None:
+            continue
+        N_values.append(N)
+        f_values.append(f_est)
+
+    if not N_values:
+        print("  [1.3] No F_est values could be computed from the loaded data.")
+        return
 
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.plot(
@@ -363,8 +384,6 @@ def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
 
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel(r'Valor estacionario $F_{est}$', fontsize=14)
-    ax.set_title(r'Inciso 1.3: $F_{est}$ en función de $N$',
-                 fontsize=16, fontweight='bold')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
     ax.set_xticks(N_values)
@@ -392,8 +411,9 @@ if __name__ == '__main__':
             print("No simulation files found.")
             sys.exit(1)
         files_by_N = group_entries_by_N(entries)
+        selected_profile_ns = [N for N in sorted(files_by_N.keys()) if N in DISPLAY_PROFILE_N_VALUES]
 
-        for N in sorted(files_by_N.keys()):
+        for N in selected_profile_ns:
             plot_fraction_used_realizations(files_by_N[N])
         plot_t_est_vs_N(files_by_N)
         plot_f_est_vs_N(files_by_N)

@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 
-CACHE_SUFFIX = ".analysis.v1.json.gz"
+CACHE_SUFFIX = ".analysis.v2.json.gz"
 ANALYZER_CLASS = "ar.edu.itba.sds.tp3.SimulationAnalysisCacheBuilder"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENGINE_CLASSES = REPO_ROOT / "engine" / "target" / "classes"

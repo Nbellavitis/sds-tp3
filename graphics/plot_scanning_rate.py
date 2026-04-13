@@ -22,6 +22,8 @@ import os
 import argparse
 import re
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
@@ -210,14 +212,10 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
     
     ax.errorbar(N_values, J_means, yerr=J_stds, fmt='s-', capsize=5,
                 color='#9C27B0', ecolor='#CE93D8', markerfacecolor='#6A1B9A',
-                markeredgecolor='#4A148C', markersize=8, linewidth=2,
-                label=r'$\langle J \rangle \pm \sigma$')
+                markeredgecolor='#4A148C', markersize=8, linewidth=2)
     
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel(r'Scanning rate $\langle J \rangle$ [contactos/s]', fontsize=14)
-    ax.set_title(r'Inciso 1.2: Scanning rate $\langle J \rangle$ vs $N$',
-                 fontsize=16, fontweight='bold')
-    ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
     ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
@@ -243,27 +241,30 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
         J = float(entry["cfc"]["J"])
         intercept = float(entry["cfc"]["intercept"])
         color = colors[run_index - 1]
-        run_label = describe_run(fpath, run_index)
 
-        ax2.step(times, cfc, where='post', alpha=0.8, linewidth=1.6, color=color,
-                 label=f'{run_label}: $C_{{fc}}(t)$')
+        ax2.step(times, cfc, where='post', alpha=0.8, linewidth=1.6, color=color)
         
         # Linear fit line
         t_fit = np.linspace(0, t_final, 100)
-        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.8, color=color,
-                 label=f'{run_label}: ajuste lineal ($J={J:.2f}$ contactos/s)')
+        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.8, color=color)
     
     ax2.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax2.set_ylabel('$C_{fc}(t)$ [contactos acumulados]', fontsize=14)
-    ax2.set_title(f'Inciso 1.2: $C_{{fc}}(t)$ para $N={max_N}$\n'
-                  f'cada escalon es un cambio F->U y la recta punteada tiene pendiente $J$',
-                  fontsize=16, fontweight='bold')
-    ax2.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
-               borderaxespad=0.0)
+    ax2.set_title(rf'$C_{{fc}}(t)$ para $N={max_N}$', fontsize=14)
+    ax2.text(
+        0.02,
+        0.98,
+        "Lineas solidas: contactos acumulados\nLineas punteadas: ajuste lineal",
+        transform=ax2.transAxes,
+        va='top',
+        ha='left',
+        fontsize=11,
+        bbox=dict(boxstyle='round,pad=0.35', facecolor='white', alpha=0.9, edgecolor='#BDBDBD'),
+    )
     ax2.grid(True, alpha=0.3, linestyle='--')
     ax2.tick_params(axis='both', labelsize=12)
     
-    plt.tight_layout(rect=(0, 0, 0.88, 1))
+    plt.tight_layout()
     outpath2 = os.path.join(output_dir, "inciso_1_2_cfc_curve.png")
     plt.savefig(outpath2, dpi=150, bbox_inches='tight')
     plt.close()
