@@ -37,6 +37,8 @@ MANUAL_T_EST_BY_N = {
     200: 300.0,
     250: 400.0,
     300: 400.0,
+    500: 600.0,
+    800: 900.0
 }
 
 def parse_simulation_file(filepath):
@@ -178,6 +180,20 @@ def compute_f_est_from_entries(entries_or_entry, t_est):
     return float(np.mean(stationary_values))
 
 
+def collect_stationary_values(entries_or_entry, t_est):
+    """Return the pooled stationary-value bag for one N."""
+    if t_est is None:
+        return np.array([], dtype=float)
+
+    stationary_values = []
+    for entry in normalize_entries(entries_or_entry):
+        times, fu = extract_fu_series(entry)
+        if len(times) == 0:
+            continue
+        stationary_values.extend(fu[times >= t_est].tolist())
+    return np.array(stationary_values, dtype=float)
+
+
 def get_stationary_values(entries_or_entry, N):
     """Return manual t_est and data-driven F_est for one N."""
     t_est = MANUAL_T_EST_BY_N.get(N)
@@ -307,7 +323,7 @@ def get_available_manual_N_values(files_by_N):
     """Return N values present in the data and with an available manual t_est."""
     return [
         N for N in sorted(files_by_N.keys())
-        if N in MANUAL_T_EST_BY_N
+        if N in MANUAL_T_EST_BY_N and N in DISPLAY_PROFILE_N_VALUES
     ]
 
 
@@ -359,31 +375,38 @@ def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
 
     N_values = []
     f_values = []
+    f_stds = []
     for N in candidate_N_values:
-        f_est = compute_f_est_from_entries(files_by_N[N], MANUAL_T_EST_BY_N[N])
-        if f_est is None:
+        stationary_values = collect_stationary_values(files_by_N[N], MANUAL_T_EST_BY_N[N])
+        if stationary_values.size == 0:
             continue
+        f_est = float(np.mean(stationary_values))
+        f_std = float(np.std(stationary_values))
         N_values.append(N)
         f_values.append(f_est)
+        f_stds.append(f_std)
 
     if not N_values:
         print("  [1.3] No F_est values could be computed from the loaded data.")
         return
 
     fig, ax = plt.subplots(figsize=(10, 7))
-    ax.plot(
+    ax.errorbar(
         N_values,
         f_values,
-        'o-',
+        yerr=f_stds,
+        fmt='o-',
+        capsize=5,
         linewidth=2.0,
         markersize=7,
         color='#D81B60',
+        ecolor='#F8BBD0',
         markerfacecolor='#F48FB1',
         markeredgecolor='#880E4F',
     )
 
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel(r'Valor estacionario $F_{est}$', fontsize=14)
+    ax.set_ylabel(r'Fracción estacionaria media $\langle F_{est} \rangle$', fontsize=14)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
     ax.set_xticks(N_values)
@@ -394,6 +417,7 @@ def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.3] Saved: {outpath}")
+    print("  [1.3] Barras de error: desvío estándar poblacional de la bolsa estacionaria por N.")
 
 
 if __name__ == '__main__':

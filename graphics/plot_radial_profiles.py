@@ -27,9 +27,100 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
+from plot_fraction_used import MANUAL_T_EST_BY_N
 
 
 DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+STATIONARY_ACCUMULATORS_CACHE = {}
+
+
+def parse_metadata_tokens(line, metadata):
+    """Parse numeric key=value tokens from one header line."""
+    stripped = line.strip().lstrip('# ')
+    for part in stripped.split():
+        if '=' not in part:
+            continue
+        key, val = part.split('=', 1)
+        try:
+            metadata[key] = float(val)
+        except ValueError:
+            metadata[key] = val
+
+
+def compute_stationary_accumulators_from_file(filepath, t_est, dS=0.2):
+    """Stream one sim file and accumulate radial data only for snapshots with t >= t_est."""
+    metadata = {}
+    shell_edges = None
+    S_centers = None
+    shell_areas = None
+    count_sum = None
+    velocity_sum = None
+    snapshot_count = 0.0
+    N = None
+
+    with open(filepath, 'r') as f:
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            trimmed = line.strip()
+            if not trimmed:
+                continue
+
+            if trimmed.startswith('#'):
+                parse_metadata_tokens(trimmed, metadata)
+                continue
+
+            if not trimmed.startswith('S '):
+                continue
+
+            if N is None:
+                N = int(metadata.get('N', 0))
+                if N <= 0:
+                    raise ValueError(f"Invalid or missing N in metadata for {filepath}")
+                shell_edges, S_centers, shell_areas = build_shell_geometry(metadata, dS)
+                count_sum = np.zeros(len(S_centers), dtype=float)
+                velocity_sum = np.zeros(len(S_centers), dtype=float)
+
+            t_snapshot = float(trimmed.split()[1])
+            include_snapshot = (t_est is None) or (t_snapshot >= t_est)
+
+            for _ in range(N):
+                particle_line = f.readline()
+                if not particle_line:
+                    raise EOFError(f"Unexpected EOF while reading snapshot at t={t_snapshot} in {filepath}")
+
+                if not include_snapshot:
+                    continue
+
+                parts = particle_line.strip().split()
+                if len(parts) < 6 or parts[5] != 'F':
+                    continue
+
+                x = float(parts[1])
+                y = float(parts[2])
+                vx = float(parts[3])
+                vy = float(parts[4])
+                S = np.sqrt(x * x + y * y)
+                rdotv = x * vx + y * vy
+                if rdotv >= 0:
+                    continue
+                if S < shell_edges[0] - 1e-12 or S > shell_edges[-1] + 1e-12:
+                    continue
+
+                shell_idx = np.searchsorted(shell_edges, S, side='right') - 1
+                shell_idx = min(max(shell_idx, 0), len(S_centers) - 1)
+                vf_in = rdotv / S if S > 1e-10 else 0.0
+                count_sum[shell_idx] += 1.0
+                velocity_sum[shell_idx] += vf_in
+
+            if include_snapshot:
+                snapshot_count += 1.0
+
+    if S_centers is None:
+        raise ValueError(f"No snapshots found in {filepath}")
+
+    return S_centers, shell_areas, snapshot_count, count_sum, velocity_sum
 
 
 def parse_simulation_file(filepath):
@@ -113,13 +204,21 @@ def compute_radial_profiles(snapshots, metadata, dS=0.2):
     This helper mirrors the cache-based logic: it uses only the saved
     snapshots and pools all particles observed in each shell before averaging.
     """
+    S_centers, shell_areas, snapshot_count, count_sum, velocity_sum = \
+        compute_radial_accumulators(snapshots, metadata, dS)
+    rho_mean, v_mean, J_in = derive_profiles_from_accumulators(
+        snapshot_count,
+        shell_areas,
+        count_sum,
+        velocity_sum,
+    )
+    return S_centers, rho_mean, v_mean, J_in
+
+
+def compute_radial_accumulators(snapshots, metadata, dS=0.2):
+    """Accumulate shell counts/velocity sums from a snapshot list."""
     shell_edges, S_centers, shell_areas = build_shell_geometry(metadata, dS)
     n_shells = len(S_centers)
-
-    if len(snapshots) == 0:
-        zeros = np.zeros(n_shells)
-        return S_centers, zeros, zeros.copy(), zeros.copy()
-
     count_sum = np.zeros(n_shells)
     velocity_sum = np.zeros(n_shells)
 
@@ -146,13 +245,34 @@ def compute_radial_profiles(snapshots, metadata, dS=0.2):
             count_sum[shell_idx] += 1
             velocity_sum[shell_idx] += vf_in
 
-    rho_mean = count_sum / (len(snapshots) * shell_areas)
-    v_mean = np.zeros(n_shells)
-    nonzero = count_sum > 1e-12
-    v_mean[nonzero] = velocity_sum[nonzero] / count_sum[nonzero]
-    J_in = rho_mean * np.abs(v_mean)
+    return S_centers, shell_areas, float(len(snapshots)), count_sum, velocity_sum
 
-    return S_centers, rho_mean, v_mean, J_in
+
+def filter_stationary_snapshots(snapshots, t_est):
+    """Keep only snapshots in the stationary regime t >= t_est."""
+    if t_est is None:
+        return snapshots
+    return [(t, particles) for t, particles in snapshots if t >= t_est]
+
+
+def extract_stationary_accumulators(entry, dS=0.2):
+    """Build radial accumulators for one realization using only t >= t_est snapshots."""
+    N = int(entry["metadata"]["N"])
+    t_est = MANUAL_T_EST_BY_N.get(N)
+    key = (
+        entry["source_path"],
+        float(dS),
+        t_est,
+        entry.get("source_mtime_ms"),
+        entry.get("source_size"),
+    )
+    if key not in STATIONARY_ACCUMULATORS_CACHE:
+        STATIONARY_ACCUMULATORS_CACHE[key] = compute_stationary_accumulators_from_file(
+            entry["source_path"],
+            t_est,
+            dS,
+        )
+    return STATIONARY_ACCUMULATORS_CACHE[key], t_est
 
 
 def aggregate_radial_profiles(entries, dS=0.2):
@@ -162,7 +282,8 @@ def aggregate_radial_profiles(entries, dS=0.2):
     The mean profile is computed from pooled snapshot accumulators across all
     realizations, while the error bars still show per-realization dispersion.
     """
-    accumulators = [extract_radial_profile_accumulators(entry) for entry in entries]
+    stationary_data = [extract_stationary_accumulators(entry, dS) for entry in entries]
+    accumulators = [item[0] for item in stationary_data]
     S_centers = accumulators[0][0]
     shell_areas = accumulators[0][1]
 
@@ -187,11 +308,11 @@ def aggregate_radial_profiles(entries, dS=0.2):
     return (
         S_centers,
         rho_mean,
-        np.std(rho_matrix, axis=0),
+        np.std(rho_matrix, axis=0, ddof=0),
         v_mean,
-        np.std(v_matrix, axis=0),
+        np.std(v_matrix, axis=0, ddof=0),
         J_mean,
-        np.std(j_matrix, axis=0),
+        np.std(j_matrix, axis=0, ddof=0),
     )
 
 
@@ -464,7 +585,14 @@ def plot_radial_profiles(entry=None, filepath=None, output_dir="graphics/output"
     
     metadata = entry["metadata"]
     N = int(metadata['N'])
-    S_centers, rho_mean, v_mean, J_in = extract_radial_profiles(entry)
+    (S_centers, shell_areas, snapshot_count, count_sum, vf_in_sum), t_est = \
+        extract_stationary_accumulators(entry, dS)
+    rho_mean, v_mean, J_in = derive_profiles_from_accumulators(
+        snapshot_count,
+        shell_areas,
+        count_sum,
+        vf_in_sum,
+    )
 
     outpaths = save_radial_profile_figures(
         N,
@@ -476,7 +604,8 @@ def plot_radial_profiles(entry=None, filepath=None, output_dir="graphics/output"
     )
     for outpath in outpaths:
         print(f"  [1.4] Saved: {outpath}")
-    
+    print(f"  [1.4] N={N}: perfiles calculados usando snapshots con t>=t_est ({t_est}).")
+
     return S_centers, rho_mean, v_mean, J_in
 
 
@@ -486,6 +615,7 @@ def plot_radial_profiles_ensemble(entries, output_dir="graphics/output", dS=0.2)
 
     metadata = entries[0]["metadata"]
     N = int(metadata['N'])
+    t_est = MANUAL_T_EST_BY_N.get(N)
     S_centers, rho_mean, rho_std, v_mean, v_std, J_mean, J_std = \
         aggregate_radial_profiles(entries, dS)
 
@@ -502,6 +632,7 @@ def plot_radial_profiles_ensemble(entries, output_dir="graphics/output", dS=0.2)
     )
     for outpath in outpaths:
         print(f"  [1.4] Saved: {outpath}")
+    print(f"  [1.4] N={N}: promedio y desvío poblacional calculados con t>=t_est ({t_est}).")
 
     return S_centers, rho_mean, v_mean, J_mean
 
@@ -526,7 +657,8 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
     j_err = []
     for N in N_values:
         per_run_profiles = []
-        accumulators = [extract_radial_profile_accumulators(entry) for entry in files_by_N[N]]
+        stationary_data = [extract_stationary_accumulators(entry, dS) for entry in files_by_N[N]]
+        accumulators = [item[0] for item in stationary_data]
         S_centers = accumulators[0][0]
         shell_areas = accumulators[0][1]
 
@@ -555,10 +687,10 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
         rho_at_S2.append(rho_pooled[idx])
         v_at_S2.append(np.abs(v_pooled[idx]))
         J_at_S2.append(J_pooled[idx])
-        rho_err.append(np.std([profile[0][idx] for profile in per_run_profiles]))
-        v_err.append(np.std([np.abs(profile[1][idx]) for profile in per_run_profiles]))
-        j_err.append(np.std([profile[2][idx] for profile in per_run_profiles]))
-    
+        rho_err.append(np.std([profile[0][idx] for profile in per_run_profiles], ddof=0))
+        v_err.append(np.std([np.abs(profile[1][idx]) for profile in per_run_profiles], ddof=0))
+        j_err.append(np.std([profile[2][idx] for profile in per_run_profiles], ddof=0))
+
     outpaths = save_s2_vs_n_figures(
         N_values,
         rho_at_S2,
@@ -589,14 +721,15 @@ if __name__ == '__main__':
             sys.exit(1)
         files_by_N = group_entries_by_N(entries)
         selected_profile_ns = [N for N in sorted(files_by_N.keys()) if N in DISPLAY_PROFILE_N_VALUES]
-        
+        selected_files_by_N = {N: files_by_N[N] for N in selected_profile_ns}
+
         # Plot radial profiles for each N using all realizations.
         for N in selected_profile_ns:
             plot_radial_profiles_ensemble(files_by_N[N])
         
         # Plot S≈2 vs N
-        if len(files_by_N) > 1:
-            plot_at_S2_vs_N(files_by_N)
+        if len(selected_files_by_N) > 1:
+            plot_at_S2_vs_N(selected_files_by_N)
     else:
         print(f"Error: '{path}' not found.")
         sys.exit(1)
