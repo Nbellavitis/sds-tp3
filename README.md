@@ -80,6 +80,7 @@ java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 
 | `-seed`   | Semilla para reproducibilidad   | aleatorio |
 | `-runs`   | Número de realizaciones         | 1       |
 | `-t_final` | Tiempo final de simulación [s] | 5.0     |
+| `--no-output` | No escribe `sim_*.txt`; útil para medir tiempo sin costo de I/O | desactivado |
 
 ### Múltiples realizaciones
 
@@ -145,6 +146,8 @@ python graphics/plot_execution_time.py
 - **Requisito:** `data/timing_1_1.txt` (generado por `run_batch.py --for-1-1`)
 - La consigna de 1.1 usa los primeros `5 s` simulados
 - `--for-1-1` sigue siendo una forma cómoda de generar el batch dedicado, pero ya no hace falta que la simulación completa termine exactamente en `t_f = 5 s`
+- Ese batch corre la simulación con `--no-output`: genera solo `data/timing_1_1.txt`, no crea `sim_*.txt`, y así la medición no arrastra costo de I/O
+- `data/timing.txt` guarda tiempo total de realización; `data/timing_1_1.txt` guarda solo el tiempo hasta los primeros `5 s` simulados
 - `--n-max` te deja elegir ese `N` máximo; por default vale `500`
 - El gráfico de 1.1 acepta archivos de timing medidos hasta `t=5 s` simulados, aun si la corrida completa tuvo `t_f > 5 s`
 - Cada punto grafica el tiempo medio de ejecución hasta esos primeros `5 s` simulados para ese `N`

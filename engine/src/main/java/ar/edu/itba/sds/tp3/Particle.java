@@ -15,6 +15,7 @@ public class Particle {
     private double vx, vy;     // velocity [m/s]
     private final double radius;     // particle radius [m]
     private final double mass;       // particle mass [kg]
+    private double lastUpdateTime;   // absolute time of stored (x, y)
     private int collisionCount;      // for event invalidation
     private State state;
 
@@ -27,14 +28,26 @@ public class Particle {
         this.vy = vy;
         this.radius = radius;
         this.mass = mass;
+        this.lastUpdateTime = 0.0;
         this.collisionCount = 0;
         this.state = State.FRESH;
     }
 
     // ── Advance particle to time dt ──────────────────────────────────────
     public void advance(double dt) {
+        if (dt <= 0.0) {
+            return;
+        }
         x += vx * dt;
         y += vy * dt;
+        lastUpdateTime += dt;
+    }
+
+    public void advanceTo(double time) {
+        if (time <= lastUpdateTime) {
+            return;
+        }
+        advance(time - lastUpdateTime);
     }
 
     // ── Collision time: Particle–Particle ────────────────────────────────
@@ -43,9 +56,9 @@ public class Particle {
      * Returns Double.POSITIVE_INFINITY if no collision.
      * Uses the quadratic from Slide 14/20 of Teorica_3.
      */
-    public double timeToCollide(Particle other) {
-        double dx = other.x - this.x;
-        double dy = other.y - this.y;
+    public double timeToCollide(Particle other, double referenceTime) {
+        double dx = other.getX(referenceTime) - this.getX(referenceTime);
+        double dy = other.getY(referenceTime) - this.getY(referenceTime);
         double dvx = other.vx - this.vx;
         double dvy = other.vy - this.vy;
 
@@ -75,14 +88,16 @@ public class Particle {
      * We want the POSITIVE root (the larger one if both are positive,
      * since the particle is inside).
      */
-    public double timeToOuterWall(double enclosureRadius) {
+    public double timeToOuterWall(double enclosureRadius, double referenceTime) {
         double Reff = enclosureRadius - this.radius;
+        double px = getX(referenceTime);
+        double py = getY(referenceTime);
 
         double a = vx * vx + vy * vy;
         if (a < 1e-15) return Double.POSITIVE_INFINITY; // stationary
 
-        double b = x * vx + y * vy; // half of the linear coefficient
-        double c = x * x + y * y - Reff * Reff;
+        double b = px * vx + py * vy; // half of the linear coefficient
+        double c = px * px + py * py - Reff * Reff;
 
         double disc = b * b - a * c;
         if (disc < 0) return Double.POSITIVE_INFINITY;
@@ -112,14 +127,16 @@ public class Particle {
      * Solve: (v·v)t^2 + 2(r·v)t + (r·r - sigma^2) = 0
      * We want the SMALLEST POSITIVE root (particle approaches obstacle from outside).
      */
-    public double timeToObstacle(double obstacleRadius) {
+    public double timeToObstacle(double obstacleRadius, double referenceTime) {
         double sigma = obstacleRadius + this.radius;
+        double px = getX(referenceTime);
+        double py = getY(referenceTime);
 
         double a = vx * vx + vy * vy;
         if (a < 1e-15) return Double.POSITIVE_INFINITY;
 
-        double b = x * vx + y * vy; // half of linear coefficient (= r·v)
-        double c = x * x + y * y - sigma * sigma;
+        double b = px * vx + py * vy; // half of linear coefficient (= r·v)
+        double c = px * px + py * py - sigma * sigma;
 
         // c > 0 means particle center is outside contact distance (normal case)
         // c <= 0 would be overlap or touching
@@ -146,7 +163,10 @@ public class Particle {
      * J = 2 * m1 * m2 * (dv · dr) / (sigma * (m1 + m2))
      * Updates velocities of both particles.
      */
-    public void resolveCollision(Particle other) {
+    public void resolveCollision(Particle other, double eventTime) {
+        advanceTo(eventTime);
+        other.advanceTo(eventTime);
+
         double dx = other.x - this.x;
         double dy = other.y - this.y;
         double dvx = other.vx - this.vx;
@@ -175,7 +195,8 @@ public class Particle {
      * Normal vector points inward: n = -r/|r|
      * v' = v - 2*(v · n_out)*n_out  where n_out = r/|r|
      */
-    public void resolveOuterWallCollision() {
+    public void resolveOuterWallCollision(double eventTime) {
+        advanceTo(eventTime);
         double dist = Math.sqrt(x * x + y * y);
         if (dist < 1e-15) return;
 
@@ -200,7 +221,8 @@ public class Particle {
      *
      * Returns true if this was a FRESH -> USED transition (for C_fc counting).
      */
-    public boolean resolveObstacleCollision() {
+    public boolean resolveObstacleCollision(double eventTime) {
+        advanceTo(eventTime);
         double dist = Math.sqrt(x * x + y * y);
         if (dist < 1e-15) return false;
 
@@ -224,6 +246,8 @@ public class Particle {
     public int getId() { return id; }
     public double getX() { return x; }
     public double getY() { return y; }
+    public double getX(double time) { return x + vx * (time - lastUpdateTime); }
+    public double getY(double time) { return y + vy * (time - lastUpdateTime); }
     public double getVx() { return vx; }
     public double getVy() { return vy; }
     public double getRadius() { return radius; }

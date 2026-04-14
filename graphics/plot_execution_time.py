@@ -23,6 +23,29 @@ import matplotlib.pyplot as plt
 REQUIRED_MEASUREMENT_WINDOW_1_1 = 5.0
 
 
+def parse_runtime_report(stdout):
+    """Extract both total runtime and dedicated inciso 1.1 timing from stdout."""
+    total_runtime_match = re.search(r'Total runtime:\s*([\d.]+)\s*ms', stdout)
+    if total_runtime_match is None:
+        total_runtime_match = re.search(r'Completed full run in\s+([\d.]+)\s*ms', stdout)
+
+    timing_window_match = re.search(
+        r'Inciso 1\.1 runtime \(first\s+([\d.]+)\s+simulated seconds\):\s*([\d.]+)\s*ms',
+        stdout,
+    )
+    if timing_window_match is None:
+        timing_window_match = re.search(
+            r'Completed first\s+([\d.]+)\s+simulated seconds in\s+([\d.]+)\s*ms',
+            stdout,
+        )
+
+    return {
+        "total_runtime_ms": float(total_runtime_match.group(1)) if total_runtime_match else None,
+        "measurement_window_s": float(timing_window_match.group(1)) if timing_window_match else None,
+        "measurement_window_ms": float(timing_window_match.group(2)) if timing_window_match else None,
+    }
+
+
 def fit_power_law_model(x, y):
     """
     Fit y = C * x^alpha using linear regression on log(x), log(y).
@@ -68,23 +91,14 @@ def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.
             cmd = [
                 "java", "-cp", "engine/target/classes",
                 "ar.edu.itba.sds.tp3.EventDrivenSimulation",
-                "-N", str(N), "-seed", str(seed), "-t_final", str(t_final)
+                "-N", str(N), "-seed", str(seed), "-t_final", str(t_final), "--no-output"
             ]
             print(f"  Running N={N}, run {run+1}/{runs_per_N}...")
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
             
-            # Parse execution time from output
-            window_match = re.search(
-                r'Completed first\s+[\d.]+\s+simulated seconds in\s+(\d+\.?\d*)\s*ms',
-                result.stdout,
-            )
-            if window_match:
-                times_by_N[N].append(float(window_match.group(1)))
-                continue
-
-            full_run_match = re.search(r'Completed full run in\s+(\d+\.?\d*)\s*ms', result.stdout)
-            if full_run_match:
-                times_by_N[N].append(float(full_run_match.group(1)))
+            timings = parse_runtime_report(result.stdout)
+            if timings["measurement_window_ms"] is not None:
+                times_by_N[N].append(timings["measurement_window_ms"])
     
     return times_by_N
 
@@ -160,6 +174,16 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
 
     measurement_window = timing_metadata.get('measurement_window_s')
     sim_t_final = timing_metadata.get('sim_t_final', timing_metadata.get('t_final'))
+    stored_metric = timing_metadata.get('stored_metric')
+
+    if stored_metric is not None and stored_metric != 'measurement_window':
+        print(f"  [1.1] WARNING: {timing_file} stores '{stored_metric}' instead of measurement_window timings.")
+        print("  [1.1] Use data/timing_1_1.txt or regenerate the dedicated 1.1 timing file.")
+        return
+    if stored_metric is None and os.path.basename(timing_file) == "timing.txt":
+        print(f"  [1.1] WARNING: {timing_file} stores 'total_runtime' instead of measurement_window timings.")
+        print("  [1.1] Use data/timing_1_1.txt or regenerate the dedicated 1.1 timing file.")
+        return
 
     if not isinstance(measurement_window, (int, float)):
         if isinstance(sim_t_final, (int, float)) and abs(float(sim_t_final) - REQUIRED_MEASUREMENT_WINDOW_1_1) <= 1e-9:

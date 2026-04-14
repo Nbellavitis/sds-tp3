@@ -30,7 +30,7 @@ from analysis_cache import group_entries_by_N, load_analysis_entries, load_analy
 from plot_fraction_used import MANUAL_T_EST_BY_N
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
 STATIONARY_ACCUMULATORS_CACHE = {}
 
 
@@ -721,15 +721,14 @@ if __name__ == '__main__':
             sys.exit(1)
         files_by_N = group_entries_by_N(entries)
         selected_profile_ns = [N for N in sorted(files_by_N.keys()) if N in DISPLAY_PROFILE_N_VALUES]
-        selected_files_by_N = {N: files_by_N[N] for N in selected_profile_ns}
 
         # Plot radial profiles for each N using all realizations.
         for N in selected_profile_ns:
             plot_radial_profiles_ensemble(files_by_N[N])
         
         # Plot S≈2 vs N
-        if len(selected_files_by_N) > 1:
-            plot_at_S2_vs_N(selected_files_by_N)
+        if len(files_by_N) > 1:
+            plot_at_S2_vs_N(files_by_N)
     else:
         print(f"Error: '{path}' not found.")
         sys.exit(1)

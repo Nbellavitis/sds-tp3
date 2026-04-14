@@ -175,6 +175,7 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
     R_enclosure = float(metadata["R_enclosure"])
     r0 = float(metadata["r0"])
     r_particle = float(metadata["r"])
+    snapshot_every_events = int(metadata.get("snapshot_every_events", 1))
 
     frame_times = build_frame_times(data["times"], fps=fps, speed=speed)
     frame_data = interpolate_frames(data, frame_times)
@@ -184,6 +185,11 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
     playback_seconds = (frame_times[-1] - frame_times[0]) / speed
     print(f"Animating {os.path.basename(filepath)}")
     print(f"  N={N}, snapshots={len(data['times'])}, frames={n_frames}")
+    if snapshot_every_events > 1:
+        print(
+            f"  WARNING: snapshots were saved every {snapshot_every_events} collisions; "
+            "the animation is approximate between saved events."
+        )
     print(f"  simulated time: {frame_times[0]:.3f} s -> {frame_times[-1]:.3f} s")
     print(f"  playback time: ~{playback_seconds:.2f} s at {fps} fps and x{speed:.2f}")
     print(f"  MRU propagation error: max={max_err:.3e}, mean={mean_err:.3e}")

@@ -27,7 +27,7 @@ from matplotlib.ticker import MultipleLocator
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
 
 
 MANUAL_T_EST_BY_N = {
@@ -37,8 +37,16 @@ MANUAL_T_EST_BY_N = {
     200: 300.0,
     250: 400.0,
     300: 400.0,
+    350: 500.0,
+    400: 500.0,
+    450: 600.0,
     500: 600.0,
-    700: 800.0
+    550: 700.0,
+    600: 700.0,
+    650: 800.0,
+    700: 800.0,
+    750: 900.0,
+    800: 900.0,
 }
 
 def parse_simulation_file(filepath):
@@ -205,8 +213,6 @@ def add_stationary_reference_lines(ax, N, entries_or_entry):
     """Draw manual t_est and data-driven F_est references when available."""
     t_est, f_est = get_stationary_values(entries_or_entry, N)
 
-
-
     if t_est is not None:
         ax.axvline(
             t_est,
@@ -214,6 +220,15 @@ def add_stationary_reference_lines(ax, N, entries_or_entry):
             linestyle="--",
             linewidth=1.8,
             label=rf"$t_{{est}}={t_est:g}$",
+        )
+
+    if f_est is not None:
+        ax.axhline(
+            f_est,
+            color="#D81B60",
+            linestyle=":",
+            linewidth=2.0,
+            label=rf"$F_{{est}}={f_est:.3g}$",
         )
 
     return t_est, f_est
@@ -316,7 +331,7 @@ def get_available_manual_N_values(files_by_N):
     """Return N values present in the data and with an available manual t_est."""
     return [
         N for N in sorted(files_by_N.keys())
-        if N in MANUAL_T_EST_BY_N and N in DISPLAY_PROFILE_N_VALUES
+        if N in MANUAL_T_EST_BY_N
     ]
 
 

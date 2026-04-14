@@ -13,7 +13,7 @@ import java.util.*;
  * Obstacle:  fixed disc at origin, radius r0=1m, infinite mass.
  * Particles: N particles, radius r=1m, mass m=1kg, initial speed v0=1 m/s.
  *
- * Output: All particle states at each collision event, written to data/ folder.
+ * Output: snapshots at t=0, every fixed number of collisions, and at the end.
  */
 public class EventDrivenSimulation {
 
@@ -35,6 +35,7 @@ public class EventDrivenSimulation {
     private double currentTime;
     private final Random random;
     private final double tFinal;
+    private final boolean writeOutput;
     private final String outputFilePath;
 
     // ── Metrics ──────────────────────────────────────────────────────────
@@ -65,19 +66,23 @@ public class EventDrivenSimulation {
         }
     }
 
-    public EventDrivenSimulation(int N, long seed, double tFinal) {
+    public EventDrivenSimulation(int N, long seed, double tFinal, boolean writeOutput) {
         this.N = N;
         this.particles = new Particle[N];
         this.pq = new PriorityQueue<>();
         this.currentTime = 0.0;
         this.random = new Random(seed);
         this.tFinal = tFinal;
+        this.writeOutput = writeOutput;
         this.totalCollisions = 0;
         this.lastSnapshotTime = Double.NaN;
 
-        // Generate unique filename with timestamp and seed
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        this.outputFilePath = "data/sim_" + N + "N_" + timestamp + "_s" + seed + ".txt";
+        if (writeOutput) {
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            this.outputFilePath = "data/sim_" + N + "N_" + timestamp + "_s" + seed + ".txt";
+        } else {
+            this.outputFilePath = null;
+        }
 
         initializeParticles();
     }
@@ -129,29 +134,30 @@ public class EventDrivenSimulation {
         // Particle-Particle collisions
         for (int j = 0; j < N; j++) {
             if (j == i) continue;
-            double dt = pi.timeToCollide(particles[j]);
-            if (currentTime + dt < tFinal) {
+            double dt = pi.timeToCollide(particles[j], currentTime);
+            if (Double.isFinite(dt) && currentTime + dt < tFinal) {
                 pq.add(Event.particleParticle(currentTime + dt, pi, particles[j]));
             }
         }
 
         // Outer wall collision
-        double dtWall = pi.timeToOuterWall(ENCLOSURE_RADIUS);
-        if (currentTime + dtWall < tFinal) {
+        double dtWall = pi.timeToOuterWall(ENCLOSURE_RADIUS, currentTime);
+        if (Double.isFinite(dtWall) && currentTime + dtWall < tFinal) {
             pq.add(Event.particleOuterWall(currentTime + dtWall, pi));
         }
 
         // Obstacle collision
-        double dtObs = pi.timeToObstacle(OBSTACLE_RADIUS);
-        if (currentTime + dtObs < tFinal) {
+        double dtObs = pi.timeToObstacle(OBSTACLE_RADIUS, currentTime);
+        if (Double.isFinite(dtObs) && currentTime + dtObs < tFinal) {
             pq.add(Event.particleObstacle(currentTime + dtObs, pi));
         }
     }
 
     // ── Run the simulation ───────────────────────────────────────────────
     public RunTimings run() {
-        // Ensure data directory exists
-        new File("data").mkdirs();
+        if (writeOutput) {
+            new File("data").mkdirs();
+        }
 
         long startWall = System.nanoTime();
         double timingWindow = Math.min(TIMING_WINDOW_1_1, tFinal);
@@ -162,20 +168,23 @@ public class EventDrivenSimulation {
             predictEvents(i);
         }
 
-        try (PrintWriter writer = new PrintWriter(new BufferedWriter(
-                new FileWriter(outputFilePath)))) {
+        PrintWriter writer = null;
+        try {
+            if (writeOutput) {
+                writer = new PrintWriter(new BufferedWriter(new FileWriter(outputFilePath)));
+            }
 
-            // Write metadata header
-            writer.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
-                    + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
-                    + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal
-                    + " snapshot_every_events=" + SNAPSHOT_EVERY_EVENTS);
-            writer.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
-            writer.println("# then N lines of: id x y vx vy state(F/U)");
-            writer.println("# EVENT lines start with 'E': time id");
+            if (writer != null) {
+                writer.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
+                        + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
+                        + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal
+                        + " snapshot_every_events=" + SNAPSHOT_EVERY_EVENTS);
+                writer.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
+                writer.println("# then N lines of: id x y vx vy state(F/U)");
+                writer.println("# EVENT lines start with 'E': time id");
 
-            // Initial state at t = 0
-            writeSnapshot(writer);
+                writeSnapshot(writer);
+            }
 
             // Main event loop
             while (!pq.isEmpty()) {
@@ -185,7 +194,6 @@ public class EventDrivenSimulation {
                 if (!event.isValid()) continue;
 
                 if (elapsedToTimingWindowNs < 0 && currentTime < timingWindow && event.getTime() > timingWindow) {
-                    advanceAllParticles(timingWindow - currentTime);
                     currentTime = timingWindow;
                     elapsedToTimingWindowNs = System.nanoTime() - startWall;
                 }
@@ -193,9 +201,6 @@ public class EventDrivenSimulation {
                 // Event time beyond simulation end
                 if (event.getTime() > tFinal) break;
 
-                // Advance all particles to event time
-                double dt = event.getTime() - currentTime;
-                advanceAllParticles(dt);
                 currentTime = event.getTime();
                 if (elapsedToTimingWindowNs < 0 && currentTime >= timingWindow) {
                     elapsedToTimingWindowNs = System.nanoTime() - startWall;
@@ -207,7 +212,7 @@ public class EventDrivenSimulation {
                     case PARTICLE_PARTICLE -> {
                         Particle a = event.getA();
                         Particle b = event.getB();
-                        a.resolveCollision(b);
+                        a.resolveCollision(b, currentTime);
                         totalCollisions++;
                         processedCollision = true;
 
@@ -219,7 +224,7 @@ public class EventDrivenSimulation {
                     }
                     case PARTICLE_OUTER_WALL -> {
                         Particle a = event.getA();
-                        a.resolveOuterWallCollision(); // sets state to FRESH
+                        a.resolveOuterWallCollision(currentTime); // sets state to FRESH
                         totalCollisions++;
                         processedCollision = true;
 
@@ -228,12 +233,12 @@ public class EventDrivenSimulation {
                     }
                     case PARTICLE_OBSTACLE -> {
                         Particle a = event.getA();
-                        boolean wasFreshToUsed = a.resolveObstacleCollision();
+                        boolean wasFreshToUsed = a.resolveObstacleCollision(currentTime);
                         totalCollisions++;
                         processedCollision = true;
 
                         // Log F->U transition for C_fc counting
-                        if (wasFreshToUsed) {
+                        if (wasFreshToUsed && writer != null) {
                             writer.printf("E %.6e %d%n", currentTime, a.getId());
                         }
 
@@ -246,14 +251,13 @@ public class EventDrivenSimulation {
                     }
                 }
 
-                if (processedCollision && totalCollisions % SNAPSHOT_EVERY_EVENTS == 0) {
+                if (writer != null && processedCollision && totalCollisions % SNAPSHOT_EVERY_EVENTS == 0) {
                     writeSnapshot(writer);
                 }
             }
 
             // Final snapshot
             if (currentTime < tFinal) {
-                advanceAllParticles(tFinal - currentTime);
                 currentTime = tFinal;
             }
 
@@ -261,13 +265,17 @@ public class EventDrivenSimulation {
                 elapsedToTimingWindowNs = System.nanoTime() - startWall;
             }
 
-            if (Double.isNaN(lastSnapshotTime) || Math.abs(lastSnapshotTime - currentTime) > 1e-12) {
+            if (writer != null && (Double.isNaN(lastSnapshotTime) || Math.abs(lastSnapshotTime - currentTime) > 1e-12)) {
                 writeSnapshot(writer);
             }
 
         } catch (IOException e) {
             System.err.println("Error writing output: " + e.getMessage());
             e.printStackTrace();
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
         }
 
         long endWall = System.nanoTime();
@@ -283,19 +291,10 @@ public class EventDrivenSimulation {
         writer.printf("S %.6e%n", currentTime);
         for (Particle p : particles) {
             writer.printf("%d %.6e %.6e %.6e %.6e %s%n",
-                    p.getId(), p.getX(), p.getY(), p.getVx(), p.getVy(),
+                    p.getId(), p.getX(currentTime), p.getY(currentTime), p.getVx(), p.getVy(),
                     p.getState() == Particle.State.FRESH ? "F" : "U");
         }
         lastSnapshotTime = currentTime;
-    }
-
-    private void advanceAllParticles(double dt) {
-        if (dt <= 0.0) {
-            return;
-        }
-        for (Particle p : particles) {
-            p.advance(dt);
-        }
     }
 
     // ── Find index of particle in array ──────────────────────────────────
@@ -310,6 +309,7 @@ public class EventDrivenSimulation {
         long seed = -1;       // -1 means random seed
         int runs = 1;         // number of independent realizations
         double tFinal = DEFAULT_T_FINAL;
+        boolean writeOutput = true;
 
         // Parse command-line arguments
         for (int i = 0; i < args.length; i++) {
@@ -318,6 +318,7 @@ public class EventDrivenSimulation {
                 case "-seed" -> seed = Long.parseLong(args[++i]);
                 case "-runs" -> runs = Integer.parseInt(args[++i]);
                 case "-t", "-tf", "-t_final", "-tfinal" -> tFinal = Double.parseDouble(args[++i]);
+                case "--no-output", "--timing-only" -> writeOutput = false;
             }
         }
 
@@ -339,16 +340,20 @@ public class EventDrivenSimulation {
             long actualSeed = (seed < 0) ? System.nanoTime() : seed + run;
             System.out.println("--- Run " + (run + 1) + "/" + runs + " (seed=" + actualSeed + ") ---");
 
-            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal);
+            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal, writeOutput);
             RunTimings timings = sim.run();
-            double elapsedMs = timings.getTotalElapsedNs() / 1e6;
+            double totalMs = timings.getTotalElapsedNs() / 1e6;
             double timingWindowMs = timings.getElapsedToTimingWindowNs() / 1e6;
 
-            System.out.printf("  Completed first %.2f simulated seconds in %.2f ms (%.4f s)%n",
+            System.out.printf("  Total runtime: %.2f ms (%.4f s)%n", totalMs, totalMs / 1000.0);
+            System.out.printf("  Inciso 1.1 runtime (first %.2f simulated seconds): %.2f ms (%.4f s)%n",
                     timings.getTimingWindow(), timingWindowMs, timingWindowMs / 1000.0);
-            System.out.printf("  Completed full run in %.2f ms (%.4f s)%n", elapsedMs, elapsedMs / 1000.0);
             System.out.println("  Total collisions: " + sim.totalCollisions);
-            System.out.println("  Output: " + sim.outputFilePath);
+            if (writeOutput) {
+                System.out.println("  Output: " + sim.outputFilePath);
+            } else {
+                System.out.println("  Output: disabled (--no-output)");
+            }
             System.out.println();
         }
     }

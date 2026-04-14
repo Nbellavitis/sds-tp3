@@ -21,27 +21,37 @@ import argparse
 TIMING_WINDOW_1_1 = 5.0
 
 
-def parse_measured_time_ms(stdout):
-    """Prefer the time to the first 5 simulated seconds, then fall back to full runtime."""
+def parse_runtime_report(stdout):
+    """Extract full-run timing and the dedicated inciso 1.1 timing from Java stdout."""
+    total_runtime_match = re.search(r'Total runtime:\s*([\d.]+)\s*ms', stdout)
+    if total_runtime_match is None:
+        total_runtime_match = re.search(r'Completed full run in\s+([\d.]+)\s*ms', stdout)
+
     timing_window_match = re.search(
-        r'Completed first\s+([\d.]+)\s+simulated seconds in\s+([\d.]+)\s*ms',
+        r'Inciso 1\.1 runtime \(first\s+([\d.]+)\s+simulated seconds\):\s*([\d.]+)\s*ms',
         stdout,
     )
-    if timing_window_match:
-        return float(timing_window_match.group(1)), float(timing_window_match.group(2))
+    if timing_window_match is None:
+        timing_window_match = re.search(
+            r'Completed first\s+([\d.]+)\s+simulated seconds in\s+([\d.]+)\s*ms',
+            stdout,
+        )
 
-    full_run_match = re.search(r'Completed in\s+([\d.]+)\s*ms', stdout)
-    if full_run_match:
-        return None, float(full_run_match.group(1))
-
-    full_run_match = re.search(r'Completed full run in\s+([\d.]+)\s*ms', stdout)
-    if full_run_match:
-        return None, float(full_run_match.group(1))
-
-    return None, None
+    return {
+        "total_runtime_ms": float(total_runtime_match.group(1)) if total_runtime_match else None,
+        "measurement_window_s": float(timing_window_match.group(1)) if timing_window_match else None,
+        "measurement_window_ms": float(timing_window_match.group(2)) if timing_window_match else None,
+    }
 
 
-def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="timing.txt"):
+def run_batch(
+    n_values,
+    runs_per_n,
+    seed_base=42,
+    t_final=5.0,
+    timing_filename="timing.txt",
+    use_measurement_window=False,
+):
     """
     Run the Java simulation for various N values and collect timing data.
     Writes timing.txt to data/ directory.
@@ -49,12 +59,15 @@ def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="
     os.makedirs("data", exist_ok=True)
     timing_file = os.path.join("data", timing_filename)
     measurement_window = min(TIMING_WINDOW_1_1, t_final)
+    stored_metric = "measurement_window" if use_measurement_window else "total_runtime"
+    write_output = not use_measurement_window
 
     with open(timing_file, 'w') as tf:
         tf.write("# N time_ms\n")
         tf.write(
             f"# runs_per_n={runs_per_n}, seed_base={seed_base}, "
-            f"sim_t_final={t_final}, measurement_window_s={measurement_window}\n"
+            f"sim_t_final={t_final}, measurement_window_s={measurement_window}, "
+            f"stored_metric={stored_metric}, write_output={'true' if write_output else 'false'}\n"
         )
     
     for N in n_values:
@@ -67,6 +80,8 @@ def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="
                 "ar.edu.itba.sds.tp3.EventDrivenSimulation",
                 "-N", str(N), "-seed", str(seed), "-t_final", str(t_final)
             ]
+            if use_measurement_window:
+                cmd.append("--no-output")
             
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
             
@@ -74,13 +89,18 @@ def run_batch(n_values, runs_per_n, seed_base=42, t_final=5.0, timing_filename="
                 print(f"  ERROR: {result.stderr}")
                 continue
             
-            # Parse execution time
-            measured_window_s, time_ms = parse_measured_time_ms(result.stdout)
+            timings = parse_runtime_report(result.stdout)
+            if use_measurement_window:
+                measured_window_s = timings["measurement_window_s"]
+                time_ms = timings["measurement_window_ms"]
+            else:
+                measured_window_s = None
+                time_ms = timings["total_runtime_ms"]
             
             if time_ms is not None:
                 with open(timing_file, 'a') as tf:
                     tf.write(f"{N} {time_ms:.2f}\n")
-                if measured_window_s is not None:
+                if use_measurement_window and measured_window_s is not None:
                     print(f"  Completed: {time_ms:.2f} ms hasta t={measured_window_s:g} s simulados")
                 else:
                     print(f"  Completed: {time_ms:.2f} ms")
@@ -112,7 +132,7 @@ def build_n_values(args):
 def main():
     parser = argparse.ArgumentParser(description='Batch runner for simulations')
     parser.add_argument('--for-1-1', action='store_true',
-                        help='Use the inciso 1.1 setup: N=50..Nmax with step 50 and t_f=5 s')
+                        help='Use the inciso 1.1 sweep and store timings for the first 5 simulated seconds')
     parser.add_argument('--n-max', type=int, default=500,
                         help='Maximum N when using --for-1-1 (default: 500)')
     parser.add_argument('--n-values', nargs='+', type=int,
@@ -132,9 +152,16 @@ def main():
                         help='Simulation final time t_f in seconds')
     args = parser.parse_args()
 
-    t_final = 5.0 if args.for_1_1 else args.t_final
+    t_final = args.t_final
     timing_filename = "timing_1_1.txt" if args.for_1_1 else "timing.txt"
-    run_batch(build_n_values(args), args.runs, args.seed, t_final, timing_filename)
+    run_batch(
+        build_n_values(args),
+        args.runs,
+        args.seed,
+        t_final,
+        timing_filename,
+        use_measurement_window=args.for_1_1,
+    )
 
 
 if __name__ == '__main__':
