@@ -22,7 +22,7 @@ from plot_fraction_used import (
 from plot_radial_profiles import plot_radial_profiles, plot_radial_profiles_ensemble, plot_at_S2_vs_N
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
 
 
 def main():
