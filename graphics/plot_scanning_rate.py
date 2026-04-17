@@ -6,8 +6,10 @@ The scanning rate J is obtained by linear interpolation of C_fc(t),
 the cumulative count of fresh particles that contacted the central obstacle.
 J = slope of the linear fit of C_fc(t).
 
-C_fc(t) is read from explicit 'E' event lines in the output file (exact timestamps),
-NOT from snapshot state diffing (which would miss fast F->U->F cycles).
+When available, C_fc(t) is reconstructed from the paired events_*.txt transition
+log, which preserves exact F->U timestamps independently from snapshot spacing.
+Older combined files with inline 'E' lines are still supported through the cache
+builder as a fallback.
 
 The expensive extraction is delegated to a Java cache builder; Python only
 loads the compact cached observables and plots them.

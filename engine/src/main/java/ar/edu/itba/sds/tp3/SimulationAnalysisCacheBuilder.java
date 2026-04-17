@@ -11,6 +11,7 @@ import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -82,6 +83,30 @@ public class SimulationAnalysisCacheBuilder {
             this.slope = slope;
             this.intercept = intercept;
             this.rSquared = rSquared;
+        }
+    }
+
+    private static final class TransitionEvent {
+        private final double time;
+        private final int particleId;
+        private final boolean fromUsed;
+        private final boolean toUsed;
+
+        private TransitionEvent(double time, int particleId, boolean fromUsed, boolean toUsed) {
+            this.time = time;
+            this.particleId = particleId;
+            this.fromUsed = fromUsed;
+            this.toUsed = toUsed;
+        }
+    }
+
+    private static final class TimeSeries {
+        private final double[] times;
+        private final double[] values;
+
+        private TimeSeries(double[] times, double[] values) {
+            this.times = times;
+            this.values = values;
         }
     }
 
@@ -199,11 +224,17 @@ public class SimulationAnalysisCacheBuilder {
         return cacheDir.resolve(stem + CACHE_SUFFIX);
     }
 
+    public static Path eventLogPathForSnapshot(Path simFile) {
+        String filename = simFile.getFileName().toString();
+        String suffix = filename.startsWith("sim_") ? filename.substring(4) : filename;
+        return simFile.toAbsolutePath().normalize().getParent().resolve("events_" + suffix);
+    }
+
     private static AnalysisResult analyzeSimulationFile(Path simFile, double dS) throws IOException {
         Map<String, Double> metadata = new LinkedHashMap<>();
-        List<Double> eventTimes = new ArrayList<>();
-        List<Double> fuTimes = new ArrayList<>();
-        List<Double> fuValues = new ArrayList<>();
+        List<TransitionEvent> snapshotTransitionEvents = new ArrayList<>();
+        List<Double> snapshotFuTimes = new ArrayList<>();
+        List<Double> snapshotFuValues = new ArrayList<>();
         List<Double> fallbackCfcTimes = new ArrayList<>();
         List<Double> fallbackCfcValues = new ArrayList<>();
 
@@ -237,8 +268,8 @@ public class SimulationAnalysisCacheBuilder {
                     }
 
                     SnapshotFrame currentFrame = parseSnapshot(trimmed, reader, N);
-                    fuTimes.add(currentFrame.time);
-                    fuValues.add(currentFrame.usedCount / (double) N);
+                    snapshotFuTimes.add(currentFrame.time);
+                    snapshotFuValues.add(currentFrame.usedCount / (double) N);
                     accumulateRadialProfiles(currentFrame, shellGeometry, runningProfiles);
 
                     if (previousFrame == null) {
@@ -256,7 +287,9 @@ public class SimulationAnalysisCacheBuilder {
 
                 if (trimmed.startsWith("E ")) {
                     String[] parts = trimmed.split("\\s+");
-                    eventTimes.add(Double.parseDouble(parts[1]));
+                    snapshotTransitionEvents.add(
+                            new TransitionEvent(Double.parseDouble(parts[1]), Integer.parseInt(parts[2]), false, true)
+                    );
                 }
             }
         }
@@ -265,18 +298,28 @@ public class SimulationAnalysisCacheBuilder {
             throw new IOException("No snapshots found in " + simFile);
         }
 
-        double tFinal = metadata.getOrDefault("t_final", fuTimes.isEmpty() ? 0.0 : fuTimes.get(fuTimes.size() - 1));
+        double tFinal = metadata.getOrDefault("t_final", snapshotFuTimes.isEmpty() ? 0.0 : snapshotFuTimes.get(snapshotFuTimes.size() - 1));
+        Path eventLogPath = eventLogPathForSnapshot(simFile);
+        boolean hasExternalTransitionLog = Files.exists(eventLogPath);
+        List<TransitionEvent> exactTransitionEvents = hasExternalTransitionLog
+                ? readTransitionEvents(eventLogPath)
+                : snapshotTransitionEvents;
+
         double[] cfcTimes;
         double[] cfcValues;
-        if (!eventTimes.isEmpty()) {
-            cfcTimes = buildExactCfcTimes(eventTimes, tFinal);
-            cfcValues = buildExactCfcValues(eventTimes, tFinal);
+        List<Double> freshToUsedTimes = extractFreshToUsedTimes(exactTransitionEvents);
+        if (!freshToUsedTimes.isEmpty()) {
+            cfcTimes = buildExactCfcTimes(freshToUsedTimes, tFinal);
+            cfcValues = buildExactCfcValues(freshToUsedTimes, tFinal);
         } else {
             cfcTimes = toDoubleArray(fallbackCfcTimes);
             cfcValues = toDoubleArray(fallbackCfcValues);
         }
 
         LinearFit fit = linearFit(cfcTimes, cfcValues);
+        TimeSeries fuSeries = hasExternalTransitionLog
+                ? buildExactFuSeries(exactTransitionEvents, metadata.get("N").intValue(), tFinal)
+                : new TimeSeries(toDoubleArray(snapshotFuTimes), toDoubleArray(snapshotFuValues));
 
         double[] rhoValues = new double[shellGeometry.centers.length];
         double[] vValues = new double[shellGeometry.centers.length];
@@ -302,8 +345,8 @@ public class SimulationAnalysisCacheBuilder {
                 cfcTimes,
                 cfcValues,
                 fit,
-                toDoubleArray(fuTimes),
-                toDoubleArray(fuValues),
+                fuSeries.times,
+                fuSeries.values,
                 shellGeometry.centers,
                 shellGeometry.areas,
                 runningProfiles.snapshotCount,
@@ -371,6 +414,87 @@ public class SimulationAnalysisCacheBuilder {
             }
         }
         return transitions;
+    }
+
+    private static List<TransitionEvent> readTransitionEvents(Path eventLogPath) throws IOException {
+        List<TransitionEvent> transitions = new ArrayList<>();
+        try (BufferedReader reader = Files.newBufferedReader(eventLogPath, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                if (!trimmed.startsWith("T ")) {
+                    continue;
+                }
+                String[] parts = trimmed.split("\\s+");
+                if (parts.length < 5) {
+                    continue;
+                }
+                boolean fromUsed = "U".equals(parts[3]);
+                boolean toUsed = "U".equals(parts[4]);
+                transitions.add(
+                        new TransitionEvent(
+                                Double.parseDouble(parts[1]),
+                                Integer.parseInt(parts[2]),
+                                fromUsed,
+                                toUsed
+                        )
+                );
+            }
+        }
+        transitions.sort(Comparator.comparingDouble(event -> event.time));
+        return transitions;
+    }
+
+    private static List<Double> extractFreshToUsedTimes(List<TransitionEvent> transitions) {
+        List<Double> times = new ArrayList<>();
+        for (TransitionEvent event : transitions) {
+            if (!event.fromUsed && event.toUsed) {
+                times.add(event.time);
+            }
+        }
+        return times;
+    }
+
+    private static int usedCountDelta(TransitionEvent event) {
+        if (!event.fromUsed && event.toUsed) {
+            return 1;
+        }
+        if (event.fromUsed && !event.toUsed) {
+            return -1;
+        }
+        return 0;
+    }
+
+    private static TimeSeries buildExactFuSeries(List<TransitionEvent> transitions, int nParticles, double tFinal) {
+        List<Double> times = new ArrayList<>();
+        List<Double> values = new ArrayList<>();
+        times.add(0.0);
+        values.add(0.0);
+
+        int usedCount = 0;
+        int index = 0;
+        while (index < transitions.size()) {
+            double time = transitions.get(index).time;
+            int delta = 0;
+            while (index < transitions.size() && Math.abs(transitions.get(index).time - time) <= 1e-12) {
+                delta += usedCountDelta(transitions.get(index));
+                index++;
+            }
+            usedCount = Math.max(0, Math.min(nParticles, usedCount + delta));
+            times.add(time);
+            values.add(usedCount / (double) nParticles);
+        }
+
+        double lastTime = times.get(times.size() - 1);
+        if (lastTime < tFinal - 1e-12) {
+            times.add(tFinal);
+            values.add(usedCount / (double) nParticles);
+        }
+
+        return new TimeSeries(toDoubleArray(times), toDoubleArray(values));
     }
 
     private static ShellGeometry buildShellGeometry(Map<String, Double> metadata, double dS) {

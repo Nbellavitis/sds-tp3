@@ -20,7 +20,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-REQUIRED_MEASUREMENT_WINDOW_1_1 = 5.0
+DEFAULT_MEASUREMENT_WINDOW_1_1 = 5.0
 
 
 def parse_runtime_report(stdout):
@@ -74,7 +74,13 @@ def fit_power_law_model(x, y):
     }
 
 
-def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.0):
+def run_simulations_and_measure(
+    N_values,
+    runs_per_N=5,
+    seed_base=42,
+    t_final=DEFAULT_MEASUREMENT_WINDOW_1_1,
+    measurement_window=None,
+):
     """
     Run simulations for various N values and measure execution time.
     Returns dict: N -> list of execution times [ms]
@@ -83,6 +89,8 @@ def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.
     the Java simulation multiple times.
     """
     times_by_N = {}
+    if measurement_window is None:
+        measurement_window = t_final
     
     for N in N_values:
         times_by_N[N] = []
@@ -91,7 +99,9 @@ def run_simulations_and_measure(N_values, runs_per_N=5, seed_base=42, t_final=5.
             cmd = [
                 "java", "-cp", "engine/target/classes",
                 "ar.edu.itba.sds.tp3.EventDrivenSimulation",
-                "-N", str(N), "-seed", str(seed), "-t_final", str(t_final), "--no-output"
+                "-N", str(N), "-seed", str(seed), "-t_final", str(t_final),
+                "--timing-window", str(measurement_window),
+                "--no-output"
             ]
             print(f"  Running N={N}, run {run+1}/{runs_per_N}...")
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
@@ -186,18 +196,13 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
         return
 
     if not isinstance(measurement_window, (int, float)):
-        if isinstance(sim_t_final, (int, float)) and abs(float(sim_t_final) - REQUIRED_MEASUREMENT_WINDOW_1_1) <= 1e-9:
+        if isinstance(sim_t_final, (int, float)):
             measurement_window = float(sim_t_final)
+            print(f"  [1.1] WARNING: {timing_file} has no measurement_window_s metadata; using sim_t_final={measurement_window:g} s.")
         else:
             print(f"  [1.1] WARNING: {timing_file} has no compatible measurement-window metadata.")
-            print(f"  [1.1] Inciso 1.1 requires tiempos medidos hasta t={REQUIRED_MEASUREMENT_WINDOW_1_1:g} s simulados.")
-            print("  [1.1] Re-generate timing with run_batch.py usando t_final >= 5 s.")
+            print("  [1.1] Re-generate timing with run_batch.py --for-1-1.")
             return
-
-    if abs(float(measurement_window) - REQUIRED_MEASUREMENT_WINDOW_1_1) > 1e-9:
-        print(f"  [1.1] WARNING: {timing_file} was generated with measurement_window_s={measurement_window:g}.")
-        print(f"  [1.1] Inciso 1.1 requires t={REQUIRED_MEASUREMENT_WINDOW_1_1:g} s simulados.")
-        return
 
     N_values = sorted(times_by_N.keys())
     means = np.array([np.mean(times_by_N[n]) for n in N_values], dtype=float)
@@ -232,6 +237,7 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  [1.1] Saved: {outpath}")
+    print(f"  [1.1] Cada punto usa tiempos medidos hasta t={float(measurement_window):g} s simulados.")
 
     if isinstance(sim_t_final, (int, float)) and float(sim_t_final) > float(measurement_window) + 1e-9:
         print(f"  [1.1] Se usaron los primeros {measurement_window:g} s simulados de corridas con t_final={float(sim_t_final):g} s.")

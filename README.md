@@ -28,7 +28,8 @@ sds-tp3/
 │   └── run_animation_sim.py         # Runner separado para generar salidas densas para animación
 │
 ├── data/                            # Archivos de salida de la simulación
-│   └── sim_<N>N_<timestamp>_s<seed>.txt
+│   ├── sim_<N>N_<timestamp>_s<seed>.txt
+│   ├── events_<N>N_<timestamp>_s<seed>.txt
 │   └── cache/                       # Cachés de análisis generadas por Java para post-procesado rápido
 │
 └── README.md
@@ -81,14 +82,31 @@ java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 
 | `-seed`   | Semilla para reproducibilidad   | aleatorio |
 | `-runs`   | Número de realizaciones         | 1       |
 | `-t_final` | Tiempo final de simulación [s] | 5.0     |
-| `-snapshot_every_events` | Guarda una snapshot cada K colisiones (para animación usar K=1 o K bajo) | 10 |
-| `--no-output` | No escribe `sim_*.txt`; útil para medir tiempo sin costo de I/O | desactivado |
+| `-snapshot_every_events` | Fuerza manualmente una snapshot cada K colisiones | mapa manual por `N` o fallback 10 |
+| `--no-output` | No escribe `sim_*.txt` ni `events_*.txt`; útil para medir tiempo sin costo de I/O | desactivado |
 
 ### Múltiples realizaciones
 
 ```bash
 java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 -runs 5 -seed 42 -t_final 8.0
 ```
+
+### Salidas por realización
+
+Cada realización ahora genera dos archivos:
+- `sim_*.txt`: snapshots de estado, guardadas cada `snapshot_every_events` colisiones
+- `events_*.txt`: log liviano de transiciones de estado `F->U` y `U->F`
+
+Esto permite:
+- `1.2`: reconstruir `C_fc(t)` con tiempos exactos de contacto
+- `1.3`: reconstruir `F_u(t)` con cambios exactos de estado, sin depender solo de snapshots
+
+El valor por default de `snapshot_every_events` se resuelve así:
+- si pasás `-snapshot_every_events`, manda ese valor
+- si no, el motor consulta la tabla manual `SNAPSHOT_EVERY_EVENTS_BY_N` en [EventDrivenSimulation.java](/Users/josebenegaslynch/VSProjects/sds-tp3/engine/src/main/java/ar/edu/itba/sds/tp3/EventDrivenSimulation.java:54)
+- si `N` no está en esa tabla, usa el fallback `10`
+
+El motor además imprime el tamaño del `sim_*.txt` al terminar y avisa si supera `100 MiB`, para que puedas ajustar esa tabla manual.
 
 ### Batch (múltiples N)
 
@@ -97,6 +115,7 @@ python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5
 python graphics/run_batch.py --n-start 50 --n-stop 500 --n-step 50 --runs 5
 python graphics/run_batch.py --for-1-1 --runs 5
 python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
+python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5 --t-final 8.0
 python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5 --t-final 8.0
 ```
 
@@ -142,17 +161,18 @@ python graphics/plot_metrics.py data/sim_300N_20260409_235938_s42.txt
 ```bash
 python graphics/run_batch.py --for-1-1 --runs 5
 python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
+python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5 --t-final 8.0
 python graphics/plot_execution_time.py
 ```
 
 - **Requisito:** `data/timing_1_1.txt` (generado por `run_batch.py --for-1-1`)
-- La consigna de 1.1 usa los primeros `5 s` simulados
-- `--for-1-1` sigue siendo una forma cómoda de generar el batch dedicado, pero ya no hace falta que la simulación completa termine exactamente en `t_f = 5 s`
+- `--for-1-1` mide por default los primeros `5 s` simulados, pero podés cambiarlo con `--t-final`
+- `--for-1-1` sigue siendo una forma cómoda de generar el batch dedicado, y guarda en `timing_1_1.txt` hasta qué tiempo simulado se midió
 - Ese batch corre la simulación con `--no-output`: genera solo `data/timing_1_1.txt`, no crea `sim_*.txt`, y así la medición no arrastra costo de I/O
-- `data/timing.txt` guarda tiempo total de realización; `data/timing_1_1.txt` guarda solo el tiempo hasta los primeros `5 s` simulados
+- `data/timing.txt` guarda tiempo total de realización; `data/timing_1_1.txt` guarda solo el tiempo hasta el `t` simulado pedido para 1.1
 - `--n-max` te deja elegir ese `N` máximo; por default vale `500`
-- El gráfico de 1.1 acepta archivos de timing medidos hasta `t=5 s` simulados, aun si la corrida completa tuvo `t_f > 5 s`
-- Cada punto grafica el tiempo medio de ejecución hasta esos primeros `5 s` simulados para ese `N`
+- El gráfico de 1.1 acepta archivos de timing medidos hasta cualquier `measurement_window_s` guardado en el header
+- Cada punto grafica el tiempo medio de ejecución hasta ese tiempo simulado para ese `N`
 - Las barras verticales representan la desviación estándar poblacional entre realizaciones:
   promedio: `T_prom(N) = (1/R) * sum_r T_r(N)`
   error: `sigma_T(N) = sqrt((1/R) * sum_r (T_r(N) - T_prom(N))^2)`
@@ -167,7 +187,7 @@ python graphics/plot_execution_time.py
 python graphics/plot_scanning_rate.py
 ```
 
-- Lee las líneas `E <time> <id>` de los archivos de simulación (transiciones F→U exactas)
+- Lee `events_*.txt` para obtener las transiciones exactas `F->U`
 - Construye C_fc(t) y calcula J como la pendiente de la interpolación lineal
 - Para cada `N`, el punto mostrado es el promedio de los `J_r` de todas las realizaciones
 - Las barras verticales representan la desviación estándar poblacional entre realizaciones:
@@ -189,6 +209,7 @@ python graphics/plot_fraction_used.py data/                  # directorio
 
 - En modo directorio, genera las figuras temporales solo para `N = 100, 300, 500, 800` (si están disponibles)
 - Muestra `F_u(t)` para todas las realizaciones de cada `N`, superpuestas en un mismo gráfico
+- Si existe `events_*.txt`, reconstruye `F_u(t)` con eventos exactos `F->U` y `U->F`; si no, usa snapshots como fallback
 - Marca con línea punteada vertical el `t_est` manual de cada `N`
 - Calcula `F_est` promediando los valores de `F_u(t)` a partir de `t_est`
 - La leyenda distingue realizaciones, pero ya no muestra la `seed`
@@ -239,27 +260,38 @@ python graphics/run_animation_sim.py --n 300 --seed 42 --t-final 8.0 --snapshot-
 
 ---
 
-## Formato del Archivo de Salida
+## Formato de los Archivos de Salida
 
 ```
 # N=300 L=80.0 R_enclosure=40.0 r0=1.0 r=1.0 m=1.0 v0=1.0 t_final=5.0 snapshot_every_events=1
+# transition_log_file=data/events_300N_20260409_235938_s42.txt
 # FORMAT: SNAPSHOT lines start with 'S', followed by time,
 # then N lines of: id x y vx vy state(F/U)
-# EVENT lines start with 'E': time id
 S 0.000000e+00
 0 1.234567e+01 -5.678901e+00 7.071068e-01 7.071068e-01 F
 1 -2.345678e+01 1.234567e+01 -5.000000e-01 8.660254e-01 F
-...
-E 2.619697e+00 196       <-- F->U transition (for C_fc counting)
 ...
 S 2.619697e+00          <-- snapshot guardada cada K eventos (K configurable), mas t=0 y el estado final
 ...
 ```
 
+Snapshot file `sim_*.txt`:
 - **`S <time>`**: snapshot guardada en `t=0`, cada `K` colisiones procesadas y al final (con `K = snapshot_every_events`) — seguida de N líneas con estado de cada partícula
-- **`E <time> <id>`**: evento F→U — partícula fresca contactó el obstáculo central
 - Estado: `F` (fresca/verde) o `U` (usada/violeta)
 - Unidades MKS, notación científica
+
+Transition log `events_*.txt`:
+
+```text
+# N=300 ...
+# snapshot_file=data/sim_300N_20260409_235938_s42.txt
+# FORMAT: T time id from_state to_state
+T 2.619697e+00 196 F U
+T 4.103000e+01 196 U F
+```
+
+- **`T <time> <id> F U`**: transición fresca → usada
+- **`T <time> <id> U F`**: transición usada → fresca
 
 ---
 

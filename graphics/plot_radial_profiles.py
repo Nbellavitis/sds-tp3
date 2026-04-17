@@ -48,13 +48,22 @@ def parse_metadata_tokens(line, metadata):
 
 
 def compute_stationary_accumulators_from_file(filepath, t_est, dS=0.2):
-    """Stream one sim file and accumulate radial data only for snapshots with t >= t_est."""
+    """
+    Stream one sim file and accumulate stationary radial statistics.
+
+    For each shell we keep:
+    - one density sample per snapshot: the inward fresh-particle count in that shell
+    - one velocity sample per particle: each individual inward radial velocity
+    """
     metadata = {}
     shell_edges = None
     S_centers = None
     shell_areas = None
     count_sum = None
+    count_sq_sum = None
+    velocity_sample_count = None
     velocity_sum = None
+    velocity_sq_sum = None
     snapshot_count = 0.0
     N = None
 
@@ -80,10 +89,14 @@ def compute_stationary_accumulators_from_file(filepath, t_est, dS=0.2):
                     raise ValueError(f"Invalid or missing N in metadata for {filepath}")
                 shell_edges, S_centers, shell_areas = build_shell_geometry(metadata, dS)
                 count_sum = np.zeros(len(S_centers), dtype=float)
+                count_sq_sum = np.zeros(len(S_centers), dtype=float)
+                velocity_sample_count = np.zeros(len(S_centers), dtype=float)
                 velocity_sum = np.zeros(len(S_centers), dtype=float)
+                velocity_sq_sum = np.zeros(len(S_centers), dtype=float)
 
             t_snapshot = float(trimmed.split()[1])
             include_snapshot = (t_est is None) or (t_snapshot >= t_est)
+            snapshot_counts = np.zeros(len(S_centers), dtype=float) if include_snapshot else None
 
             for _ in range(N):
                 particle_line = f.readline()
@@ -111,16 +124,29 @@ def compute_stationary_accumulators_from_file(filepath, t_est, dS=0.2):
                 shell_idx = np.searchsorted(shell_edges, S, side='right') - 1
                 shell_idx = min(max(shell_idx, 0), len(S_centers) - 1)
                 vf_in = rdotv / S if S > 1e-10 else 0.0
+                snapshot_counts[shell_idx] += 1.0
                 count_sum[shell_idx] += 1.0
+                velocity_sample_count[shell_idx] += 1.0
                 velocity_sum[shell_idx] += vf_in
+                velocity_sq_sum[shell_idx] += vf_in * vf_in
 
             if include_snapshot:
+                count_sq_sum += snapshot_counts * snapshot_counts
                 snapshot_count += 1.0
 
     if S_centers is None:
         raise ValueError(f"No snapshots found in {filepath}")
 
-    return S_centers, shell_areas, snapshot_count, count_sum, velocity_sum
+    return (
+        S_centers,
+        shell_areas,
+        snapshot_count,
+        count_sum,
+        count_sq_sum,
+        velocity_sample_count,
+        velocity_sum,
+        velocity_sq_sum,
+    )
 
 
 def parse_simulation_file(filepath):
@@ -279,8 +305,9 @@ def aggregate_radial_profiles(entries, dS=0.2):
     """
     Aggregate radial profiles over multiple realizations.
 
-    The mean profile is computed from pooled snapshot accumulators across all
-    realizations, while the error bars still show per-realization dispersion.
+    Density stats use one sample per snapshot and velocity stats use one sample
+    per particle, both pooled across every stationary snapshot in every
+    realization.
     """
     stationary_data = [extract_stationary_accumulators(entry, dS) for entry in entries]
     accumulators = [item[0] for item in stationary_data]
@@ -289,29 +316,32 @@ def aggregate_radial_profiles(entries, dS=0.2):
 
     pooled_snapshot_count = sum(acc[2] for acc in accumulators)
     pooled_count_sum = np.sum([acc[3] for acc in accumulators], axis=0)
-    pooled_vf_in_sum = np.sum([acc[4] for acc in accumulators], axis=0)
-    rho_mean, v_mean, J_mean = derive_profiles_from_accumulators(
+    pooled_count_sq_sum = np.sum([acc[4] for acc in accumulators], axis=0)
+    pooled_velocity_sample_count = np.sum([acc[5] for acc in accumulators], axis=0)
+    pooled_vf_in_sum = np.sum([acc[6] for acc in accumulators], axis=0)
+    pooled_vf_in_sq_sum = np.sum([acc[7] for acc in accumulators], axis=0)
+    rho_mean, rho_std, v_mean, v_std, J_mean = derive_profiles_from_stationary_samples(
         pooled_snapshot_count,
         shell_areas,
         pooled_count_sum,
+        pooled_count_sq_sum,
+        pooled_velocity_sample_count,
         pooled_vf_in_sum,
+        pooled_vf_in_sq_sum,
     )
 
     per_run_profiles = [
         derive_profiles_from_accumulators(snapshot_count, shell_areas, count_sum, vf_in_sum)
-        for _, _, snapshot_count, count_sum, vf_in_sum in accumulators
+        for _, _, snapshot_count, count_sum, _, _, vf_in_sum, _ in accumulators
     ]
-    rho_matrix = np.vstack([p[0] for p in per_run_profiles])
-    v_matrix = np.vstack([p[1] for p in per_run_profiles])
-    v_abs_matrix = np.abs(v_matrix)
     j_matrix = np.vstack([p[2] for p in per_run_profiles])
 
     return (
         S_centers,
         rho_mean,
-        np.std(rho_matrix, axis=0, ddof=0),
+        rho_std,
         v_mean,
-        np.std(v_abs_matrix, axis=0, ddof=0),
+        v_std,
         J_mean,
         np.std(j_matrix, axis=0, ddof=0),
     )
@@ -324,15 +354,62 @@ def derive_profiles_from_accumulators(snapshot_count, shell_areas, count_sum, vf
     shell_areas = np.array(shell_areas, dtype=float)
 
     rho = np.zeros_like(count_sum, dtype=float)
-    v = np.zeros_like(count_sum, dtype=float)
+    v = np.full_like(count_sum, np.nan, dtype=float)
+    J = np.zeros_like(count_sum, dtype=float)
 
     if snapshot_count > 0:
         rho = count_sum / (float(snapshot_count) * shell_areas)
 
     nonzero = count_sum > 1e-12
     v[nonzero] = vf_in_sum[nonzero] / count_sum[nonzero]
-    J = rho * np.abs(v)
+    J[nonzero] = rho[nonzero] * np.abs(v[nonzero])
     return rho, v, J
+
+
+def derive_profiles_from_stationary_samples(
+    snapshot_count,
+    shell_areas,
+    count_sum,
+    count_sq_sum,
+    velocity_sample_count,
+    velocity_sum,
+    velocity_sq_sum,
+):
+    """
+    Build pooled profile means/stds from stationary samples.
+
+    Density uses one sample per snapshot: the shell count divided by shell area.
+    Velocity uses one sample per particle: each inward radial velocity value.
+    """
+    count_sum = np.array(count_sum, dtype=float)
+    count_sq_sum = np.array(count_sq_sum, dtype=float)
+    velocity_sample_count = np.array(velocity_sample_count, dtype=float)
+    velocity_sum = np.array(velocity_sum, dtype=float)
+    velocity_sq_sum = np.array(velocity_sq_sum, dtype=float)
+    shell_areas = np.array(shell_areas, dtype=float)
+
+    rho_mean = np.zeros_like(count_sum, dtype=float)
+    rho_std = np.zeros_like(count_sum, dtype=float)
+    if snapshot_count > 0:
+        mean_count = count_sum / float(snapshot_count)
+        mean_count_sq = count_sq_sum / float(snapshot_count)
+        var_count = np.maximum(mean_count_sq - mean_count * mean_count, 0.0)
+        rho_mean = mean_count / shell_areas
+        rho_std = np.sqrt(var_count) / shell_areas
+
+    v_mean = np.full_like(count_sum, np.nan, dtype=float)
+    v_std = np.full_like(count_sum, np.nan, dtype=float)
+    nonzero_velocity = velocity_sample_count > 1e-12
+    if np.any(nonzero_velocity):
+        mean_velocity = velocity_sum[nonzero_velocity] / velocity_sample_count[nonzero_velocity]
+        mean_velocity_sq = velocity_sq_sum[nonzero_velocity] / velocity_sample_count[nonzero_velocity]
+        var_velocity = np.maximum(mean_velocity_sq - mean_velocity * mean_velocity, 0.0)
+        v_mean[nonzero_velocity] = mean_velocity
+        v_std[nonzero_velocity] = np.sqrt(var_velocity)
+
+    J_mean = np.zeros_like(count_sum, dtype=float)
+    J_mean[nonzero_velocity] = rho_mean[nonzero_velocity] * np.abs(v_mean[nonzero_velocity])
+    return rho_mean, rho_std, v_mean, v_std, J_mean
 
 
 def extract_radial_profile_accumulators(entry):
@@ -586,13 +663,25 @@ def plot_radial_profiles(entry=None, filepath=None, output_dir="graphics/output"
     
     metadata = entry["metadata"]
     N = int(metadata['N'])
-    (S_centers, shell_areas, snapshot_count, count_sum, vf_in_sum), t_est = \
+    (
+        S_centers,
+        shell_areas,
+        snapshot_count,
+        count_sum,
+        count_sq_sum,
+        velocity_sample_count,
+        vf_in_sum,
+        vf_in_sq_sum,
+    ), t_est = \
         extract_stationary_accumulators(entry, dS)
-    rho_mean, v_mean, J_in = derive_profiles_from_accumulators(
+    rho_mean, _, v_mean, _, J_in = derive_profiles_from_stationary_samples(
         snapshot_count,
         shell_areas,
         count_sum,
+        count_sq_sum,
+        velocity_sample_count,
         vf_in_sum,
+        vf_in_sq_sum,
     )
 
     outpaths = save_radial_profile_figures(
@@ -667,15 +756,22 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
 
         pooled_snapshot_count = sum(acc[2] for acc in accumulators)
         pooled_count_sum = np.sum([acc[3] for acc in accumulators], axis=0)
-        pooled_vf_in_sum = np.sum([acc[4] for acc in accumulators], axis=0)
-        rho_pooled, v_pooled, J_pooled = derive_profiles_from_accumulators(
+        pooled_count_sq_sum = np.sum([acc[4] for acc in accumulators], axis=0)
+        pooled_velocity_sample_count = np.sum([acc[5] for acc in accumulators], axis=0)
+        pooled_vf_in_sum = np.sum([acc[6] for acc in accumulators], axis=0)
+        pooled_vf_in_sq_sum = np.sum([acc[7] for acc in accumulators], axis=0)
+        rho_pooled, rho_pooled_std, v_pooled, v_pooled_std, J_pooled = \
+            derive_profiles_from_stationary_samples(
             pooled_snapshot_count,
             shell_areas,
             pooled_count_sum,
+            pooled_count_sq_sum,
+            pooled_velocity_sample_count,
             pooled_vf_in_sum,
+            pooled_vf_in_sq_sum,
         )
 
-        for _, _, snapshot_count, count_sum, vf_in_sum in accumulators:
+        for _, _, snapshot_count, count_sum, _, _, vf_in_sum, _ in accumulators:
             per_run_profiles.append(
                 derive_profiles_from_accumulators(
                     snapshot_count,
@@ -688,8 +784,8 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
         rho_at_S2.append(rho_pooled[idx])
         v_at_S2.append(np.abs(v_pooled[idx]))
         J_at_S2.append(J_pooled[idx])
-        rho_err.append(np.std([profile[0][idx] for profile in per_run_profiles], ddof=0))
-        v_err.append(np.std([np.abs(profile[1][idx]) for profile in per_run_profiles], ddof=0))
+        rho_err.append(rho_pooled_std[idx])
+        v_err.append(v_pooled_std[idx])
         j_err.append(np.std([profile[2][idx] for profile in per_run_profiles], ddof=0))
 
     outpaths = save_s2_vs_n_figures(

@@ -3,6 +3,8 @@ package ar.edu.itba.sds.tp3;
 import java.io.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -25,8 +27,10 @@ public class EventDrivenSimulation {
     private static final double PARTICLE_MASS = 1.0;         // m = 1 kg
     private static final double V0 = 1.0;                    // initial speed [m/s]
     private static final double DEFAULT_T_FINAL = 5.0;       // default simulation end time [s]
-    private static final double TIMING_WINDOW_1_1 = 5.0;     // simulated seconds measured for inciso 1.1
-    private static final int DEFAULT_SNAPSHOT_EVERY_EVENTS = 10; // keep one snapshot every N processed collisions
+    private static final double DEFAULT_TIMING_WINDOW_1_1 = 5.0; // default simulated seconds measured for inciso 1.1
+    private static final int DEFAULT_SNAPSHOT_EVERY_EVENTS = 10; // fallback keep one snapshot every N processed collisions
+    private static final long TARGET_MAX_SNAPSHOT_FILE_BYTES = 100L * 1024L * 1024L;
+    private static final Map<Integer, Integer> SNAPSHOT_EVERY_EVENTS_BY_N = buildSnapshotEveryEventsByN();
 
     // ── Data ─────────────────────────────────────────────────────────────
     private final int N;
@@ -35,8 +39,10 @@ public class EventDrivenSimulation {
     private double currentTime;
     private final Random random;
     private final double tFinal;
+    private final double timingWindow;
     private final boolean writeOutput;
-    private final String outputFilePath;
+    private final String snapshotOutputFilePath;
+    private final String transitionOutputFilePath;
     private final int snapshotEveryEvents;
 
     // ── Metrics ──────────────────────────────────────────────────────────
@@ -67,13 +73,15 @@ public class EventDrivenSimulation {
         }
     }
 
-    public EventDrivenSimulation(int N, long seed, double tFinal, boolean writeOutput, int snapshotEveryEvents) {
+    public EventDrivenSimulation(int N, long seed, double tFinal, double timingWindow,
+                                 boolean writeOutput, int snapshotEveryEvents) {
         this.N = N;
         this.particles = new Particle[N];
         this.pq = new PriorityQueue<>();
         this.currentTime = 0.0;
         this.random = new Random(seed);
         this.tFinal = tFinal;
+        this.timingWindow = timingWindow;
         this.writeOutput = writeOutput;
         this.snapshotEveryEvents = snapshotEveryEvents;
         this.totalCollisions = 0;
@@ -85,12 +93,44 @@ public class EventDrivenSimulation {
 
         if (writeOutput) {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            this.outputFilePath = "data/sim_" + N + "N_" + timestamp + "_s" + seed + ".txt";
+            String suffix = N + "N_" + timestamp + "_s" + seed + ".txt";
+            this.snapshotOutputFilePath = "data/sim_" + suffix;
+            this.transitionOutputFilePath = "data/events_" + suffix;
         } else {
-            this.outputFilePath = null;
+            this.snapshotOutputFilePath = null;
+            this.transitionOutputFilePath = null;
         }
 
         initializeParticles();
+    }
+
+    private static Map<Integer, Integer> buildSnapshotEveryEventsByN() {
+        Map<Integer, Integer> values = new LinkedHashMap<>();
+        // Manual per-N overrides. Edit freely if a specific N needs denser or sparser snapshots.
+        values.put(100, 10);
+        values.put(150, 15);
+        values.put(200, 20);
+        values.put(250, 25);
+        values.put(300, 30);
+        values.put(350, 35);
+        values.put(400, 40);
+        values.put(450, 45);
+        values.put(500, 50);
+        values.put(550, 60);
+        values.put(600, 70);
+        values.put(650, 80);
+        values.put(700, 90);
+        values.put(750, 100);
+        values.put(800, 120);
+        return Collections.unmodifiableMap(values);
+    }
+
+    private static int resolveDefaultSnapshotEveryEvents(int n) {
+        Integer manual = SNAPSHOT_EVERY_EVENTS_BY_N.get(n);
+        if (manual != null && manual > 0) {
+            return manual;
+        }
+        return DEFAULT_SNAPSHOT_EVERY_EVENTS;
     }
 
     // ── Particle initialization ──────────────────────────────────────────
@@ -166,7 +206,7 @@ public class EventDrivenSimulation {
         }
 
         long startWall = System.nanoTime();
-        double timingWindow = Math.min(TIMING_WINDOW_1_1, tFinal);
+        double effectiveTimingWindow = Math.min(timingWindow, tFinal);
         long elapsedToTimingWindowNs = -1L;
 
         // Initialize PQ with all events
@@ -174,22 +214,31 @@ public class EventDrivenSimulation {
             predictEvents(i);
         }
 
-        PrintWriter writer = null;
+        PrintWriter snapshotWriter = null;
+        PrintWriter transitionWriter = null;
         try {
             if (writeOutput) {
-                writer = new PrintWriter(new BufferedWriter(new FileWriter(outputFilePath)));
+                snapshotWriter = new PrintWriter(new BufferedWriter(new FileWriter(snapshotOutputFilePath)));
+                transitionWriter = new PrintWriter(new BufferedWriter(new FileWriter(transitionOutputFilePath)));
             }
 
-            if (writer != null) {
-                writer.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
+            if (snapshotWriter != null && transitionWriter != null) {
+                snapshotWriter.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
                         + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
                         + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal
                         + " snapshot_every_events=" + snapshotEveryEvents);
-                writer.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
-                writer.println("# then N lines of: id x y vx vy state(F/U)");
-                writer.println("# EVENT lines start with 'E': time id");
+                snapshotWriter.println("# transition_log_file=" + transitionOutputFilePath);
+                snapshotWriter.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
+                snapshotWriter.println("# then N lines of: id x y vx vy state(F/U)");
 
-                writeSnapshot(writer);
+                transitionWriter.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
+                        + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
+                        + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal
+                        + " snapshot_every_events=" + snapshotEveryEvents);
+                transitionWriter.println("# snapshot_file=" + snapshotOutputFilePath);
+                transitionWriter.println("# FORMAT: T time id from_state to_state");
+
+                writeSnapshot(snapshotWriter);
             }
 
             // Main event loop
@@ -199,8 +248,10 @@ public class EventDrivenSimulation {
                 // Skip invalid (stale) events
                 if (!event.isValid()) continue;
 
-                if (elapsedToTimingWindowNs < 0 && currentTime < timingWindow && event.getTime() > timingWindow) {
-                    currentTime = timingWindow;
+                if (elapsedToTimingWindowNs < 0
+                        && currentTime < effectiveTimingWindow
+                        && event.getTime() > effectiveTimingWindow) {
+                    currentTime = effectiveTimingWindow;
                     elapsedToTimingWindowNs = System.nanoTime() - startWall;
                 }
 
@@ -208,7 +259,7 @@ public class EventDrivenSimulation {
                 if (event.getTime() > tFinal) break;
 
                 currentTime = event.getTime();
-                if (elapsedToTimingWindowNs < 0 && currentTime >= timingWindow) {
+                if (elapsedToTimingWindowNs < 0 && currentTime >= effectiveTimingWindow) {
                     elapsedToTimingWindowNs = System.nanoTime() - startWall;
                 }
 
@@ -230,9 +281,13 @@ public class EventDrivenSimulation {
                     }
                     case PARTICLE_OUTER_WALL -> {
                         Particle a = event.getA();
-                        a.resolveOuterWallCollision(currentTime); // sets state to FRESH
+                        boolean wasUsedToFresh = a.resolveOuterWallCollision(currentTime);
                         totalCollisions++;
                         processedCollision = true;
+
+                        if (wasUsedToFresh && transitionWriter != null) {
+                            transitionWriter.printf("T %.6e %d U F%n", currentTime, a.getId());
+                        }
 
                         int ia = findIndex(a);
                         predictEvents(ia);
@@ -243,9 +298,8 @@ public class EventDrivenSimulation {
                         totalCollisions++;
                         processedCollision = true;
 
-                        // Log F->U transition for C_fc counting
-                        if (wasFreshToUsed && writer != null) {
-                            writer.printf("E %.6e %d%n", currentTime, a.getId());
+                        if (wasFreshToUsed && transitionWriter != null) {
+                            transitionWriter.printf("T %.6e %d F U%n", currentTime, a.getId());
                         }
 
                         int ia = findIndex(a);
@@ -257,8 +311,8 @@ public class EventDrivenSimulation {
                     }
                 }
 
-                if (writer != null && processedCollision && totalCollisions % snapshotEveryEvents == 0) {
-                    writeSnapshot(writer);
+                if (snapshotWriter != null && processedCollision && totalCollisions % snapshotEveryEvents == 0) {
+                    writeSnapshot(snapshotWriter);
                 }
             }
 
@@ -267,20 +321,23 @@ public class EventDrivenSimulation {
                 currentTime = tFinal;
             }
 
-            if (elapsedToTimingWindowNs < 0 && currentTime >= timingWindow) {
+            if (elapsedToTimingWindowNs < 0 && currentTime >= effectiveTimingWindow) {
                 elapsedToTimingWindowNs = System.nanoTime() - startWall;
             }
 
-            if (writer != null && (Double.isNaN(lastSnapshotTime) || Math.abs(lastSnapshotTime - currentTime) > 1e-12)) {
-                writeSnapshot(writer);
+            if (snapshotWriter != null && (Double.isNaN(lastSnapshotTime) || Math.abs(lastSnapshotTime - currentTime) > 1e-12)) {
+                writeSnapshot(snapshotWriter);
             }
 
         } catch (IOException e) {
             System.err.println("Error writing output: " + e.getMessage());
             e.printStackTrace();
         } finally {
-            if (writer != null) {
-                writer.close();
+            if (snapshotWriter != null) {
+                snapshotWriter.close();
+            }
+            if (transitionWriter != null) {
+                transitionWriter.close();
             }
         }
 
@@ -289,7 +346,7 @@ public class EventDrivenSimulation {
         if (elapsedToTimingWindowNs < 0) {
             elapsedToTimingWindowNs = totalElapsedNs;
         }
-        return new RunTimings(totalElapsedNs, elapsedToTimingWindowNs, timingWindow);
+        return new RunTimings(totalElapsedNs, elapsedToTimingWindowNs, effectiveTimingWindow);
     }
 
     // ── Write snapshot of all particles ──────────────────────────────────
@@ -315,8 +372,9 @@ public class EventDrivenSimulation {
         long seed = -1;       // -1 means random seed
         int runs = 1;         // number of independent realizations
         double tFinal = DEFAULT_T_FINAL;
+        double timingWindow = DEFAULT_TIMING_WINDOW_1_1;
         boolean writeOutput = true;
-        int snapshotEveryEvents = DEFAULT_SNAPSHOT_EVERY_EVENTS;
+        Integer snapshotEveryEventsOverride = null;
 
         // Parse command-line arguments
         for (int i = 0; i < args.length; i++) {
@@ -325,14 +383,25 @@ public class EventDrivenSimulation {
                 case "-seed" -> seed = Long.parseLong(args[++i]);
                 case "-runs" -> runs = Integer.parseInt(args[++i]);
                 case "-t", "-tf", "-t_final", "-tfinal" -> tFinal = Double.parseDouble(args[++i]);
+                case "--timing-window" -> timingWindow = Double.parseDouble(args[++i]);
                 case "-snapshot_every_events", "-snapshot-every-events", "--snapshot-every-events" ->
-                        snapshotEveryEvents = Integer.parseInt(args[++i]);
+                        snapshotEveryEventsOverride = Integer.parseInt(args[++i]);
                 case "--no-output", "--timing-only" -> writeOutput = false;
             }
         }
 
+        int snapshotEveryEvents = writeOutput
+                ? resolveDefaultSnapshotEveryEvents(N)
+                : DEFAULT_SNAPSHOT_EVERY_EVENTS;
+        if (snapshotEveryEventsOverride != null) {
+            snapshotEveryEvents = snapshotEveryEventsOverride;
+        }
+
         if (!Double.isFinite(tFinal) || tFinal <= 0.0) {
             throw new IllegalArgumentException("t_final must be a positive finite value");
+        }
+        if (!Double.isFinite(timingWindow) || timingWindow <= 0.0) {
+            throw new IllegalArgumentException("timing_window must be a positive finite value");
         }
         if (snapshotEveryEvents <= 0) {
             throw new IllegalArgumentException("snapshot_every_events must be >= 1");
@@ -348,6 +417,13 @@ public class EventDrivenSimulation {
         System.out.println("Runs = " + runs);
         if (writeOutput) {
             System.out.println("Snapshot every   = " + snapshotEveryEvents + " collisions");
+            if (snapshotEveryEventsOverride != null) {
+                System.out.println("Snapshot policy  = CLI override");
+            } else if (SNAPSHOT_EVERY_EVENTS_BY_N.containsKey(N)) {
+                System.out.println("Snapshot policy  = manual per-N map");
+            } else {
+                System.out.println("Snapshot policy  = default fallback");
+            }
         }
         System.out.println();
 
@@ -355,7 +431,14 @@ public class EventDrivenSimulation {
             long actualSeed = (seed < 0) ? System.nanoTime() : seed + run;
             System.out.println("--- Run " + (run + 1) + "/" + runs + " (seed=" + actualSeed + ") ---");
 
-            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal, writeOutput, snapshotEveryEvents);
+            EventDrivenSimulation sim = new EventDrivenSimulation(
+                    N,
+                    actualSeed,
+                    tFinal,
+                    timingWindow,
+                    writeOutput,
+                    snapshotEveryEvents
+            );
             RunTimings timings = sim.run();
             double totalMs = timings.getTotalElapsedNs() / 1e6;
             double timingWindowMs = timings.getElapsedToTimingWindowNs() / 1e6;
@@ -365,7 +448,22 @@ public class EventDrivenSimulation {
                     timings.getTimingWindow(), timingWindowMs, timingWindowMs / 1000.0);
             System.out.println("  Total collisions: " + sim.totalCollisions);
             if (writeOutput) {
-                System.out.println("  Output: " + sim.outputFilePath);
+                System.out.println("  Output: " + sim.snapshotOutputFilePath);
+                System.out.println("  Events: " + sim.transitionOutputFilePath);
+                try {
+                    long snapshotBytes = Files.size(Path.of(sim.snapshotOutputFilePath));
+                    double snapshotMiB = snapshotBytes / (1024.0 * 1024.0);
+                    System.out.printf("  Snapshot file size: %.2f MiB%n", snapshotMiB);
+                    if (snapshotBytes > TARGET_MAX_SNAPSHOT_FILE_BYTES) {
+                        System.out.printf(
+                                "  WARNING: snapshot file exceeded %.1f MiB; raise snapshot_every_events for N=%d.%n",
+                                TARGET_MAX_SNAPSHOT_FILE_BYTES / (1024.0 * 1024.0),
+                                N
+                        );
+                    }
+                } catch (IOException e) {
+                    System.out.println("  WARNING: could not measure snapshot file size: " + e.getMessage());
+                }
             } else {
                 System.out.println("  Output: disabled (--no-output)");
             }

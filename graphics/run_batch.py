@@ -9,6 +9,7 @@ Usage:
     python graphics/run_batch.py --n-start 50 --n-stop 500 --n-step 50 --runs 5
     python graphics/run_batch.py --for-1-1 --runs 5
     python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5
+    python graphics/run_batch.py --for-1-1 --n-max 650 --runs 5 --t-final 8.0
     python graphics/run_batch.py --n-values 50 100 150 200 250 300 --runs 5 --t-final 8.0
 """
 
@@ -18,7 +19,7 @@ import re
 import argparse
 
 
-TIMING_WINDOW_1_1 = 5.0
+DEFAULT_TIMING_WINDOW_1_1 = 5.0
 
 
 def parse_runtime_report(stdout):
@@ -48,7 +49,7 @@ def run_batch(
     n_values,
     runs_per_n,
     seed_base=42,
-    t_final=5.0,
+    t_final=DEFAULT_TIMING_WINDOW_1_1,
     timing_filename="timing.txt",
     use_measurement_window=False,
 ):
@@ -58,7 +59,7 @@ def run_batch(
     """
     os.makedirs("data", exist_ok=True)
     timing_file = os.path.join("data", timing_filename)
-    measurement_window = min(TIMING_WINDOW_1_1, t_final)
+    measurement_window = t_final if use_measurement_window else min(DEFAULT_TIMING_WINDOW_1_1, t_final)
     stored_metric = "measurement_window" if use_measurement_window else "total_runtime"
     write_output = not use_measurement_window
 
@@ -81,6 +82,7 @@ def run_batch(
                 "-N", str(N), "-seed", str(seed), "-t_final", str(t_final)
             ]
             if use_measurement_window:
+                cmd.extend(["--timing-window", str(measurement_window)])
                 cmd.append("--no-output")
             
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
@@ -132,7 +134,7 @@ def build_n_values(args):
 def main():
     parser = argparse.ArgumentParser(description='Batch runner for simulations')
     parser.add_argument('--for-1-1', action='store_true',
-                        help='Use the inciso 1.1 sweep and store timings for the first 5 simulated seconds')
+                        help='Use the inciso 1.1 sweep and store timings up to --t-final simulated seconds')
     parser.add_argument('--n-max', type=int, default=500,
                         help='Maximum N when using --for-1-1 (default: 500)')
     parser.add_argument('--n-values', nargs='+', type=int,
@@ -148,7 +150,7 @@ def main():
                         help='Number of runs per N value')
     parser.add_argument('--seed', type=int, default=42,
                         help='Base seed for reproducibility')
-    parser.add_argument('--t-final', type=float, default=5.0,
+    parser.add_argument('--t-final', type=float, default=DEFAULT_TIMING_WINDOW_1_1,
                         help='Simulation final time t_f in seconds')
     args = parser.parse_args()
 

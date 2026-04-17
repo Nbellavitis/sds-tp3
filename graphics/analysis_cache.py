@@ -43,6 +43,13 @@ def cache_path_for(sim_path, cache_dir=DEFAULT_CACHE_DIR):
     return cache_dir / f"{sim_path.stem}{CACHE_SUFFIX}"
 
 
+def event_log_path_for(sim_path):
+    """Map one snapshot file path to its paired transition-log file path."""
+    sim_path = Path(sim_path)
+    suffix = sim_path.name[4:] if sim_path.name.startswith("sim_") else sim_path.name
+    return sim_path.with_name(f"events_{suffix}")
+
+
 def backend_needs_compile():
     """Check whether the Java analyzer class is missing or stale."""
     if not ANALYZER_CLASS_FILE.exists():
@@ -70,7 +77,15 @@ def cache_is_fresh(sim_path, cache_path):
     cache_path = Path(cache_path)
     if not cache_path.exists():
         return False
-    return cache_path.stat().st_mtime >= sim_path.stat().st_mtime
+    cache_mtime = cache_path.stat().st_mtime
+    if cache_mtime < sim_path.stat().st_mtime:
+        return False
+
+    event_log = event_log_path_for(sim_path)
+    if event_log.exists() and cache_mtime < event_log.stat().st_mtime:
+        return False
+
+    return True
 
 
 def ensure_analysis_cache(path, cache_dir=DEFAULT_CACHE_DIR):

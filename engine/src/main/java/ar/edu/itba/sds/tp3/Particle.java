@@ -195,10 +195,10 @@ public class Particle {
      * Normal vector points inward: n = -r/|r|
      * v' = v - 2*(v · n_out)*n_out  where n_out = r/|r|
      */
-    public void resolveOuterWallCollision(double eventTime) {
+    public boolean resolveOuterWallCollision(double eventTime) {
         advanceTo(eventTime);
         double dist = Math.sqrt(x * x + y * y);
-        if (dist < 1e-15) return;
+        if (dist < 1e-15) return false;
 
         // Outward normal at contact point
         double nx = x / dist;
@@ -210,7 +210,9 @@ public class Particle {
 
         this.collisionCount++;
         // Hitting outer wall -> becomes FRESH
+        boolean wasUsed = (this.state == State.USED);
         this.state = State.FRESH;
+        return wasUsed;
     }
 
     // ── Resolve collision with fixed obstacle at center ──────────────────

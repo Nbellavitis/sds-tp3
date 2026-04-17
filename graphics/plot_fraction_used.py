@@ -6,6 +6,10 @@ Per the enunciado:
 - "Estudiar la evolución temporal de la fracción de partículas usadas: Fu(t) = Nu(t)/N"
 - "Reportar tiempo al estacionario y valor del estacionario alcanzado (Fest) en función de N"
 
+When a paired events_*.txt transition log exists, the cache builder reconstructs
+F_u(t) from exact F->U / U->F transitions. Otherwise it falls back to the saved
+snapshots.
+
 This script generates:
 1. F_u(t) vs t for one simulation when a single file is provided
 2. F_u(t) vs t for all realizations of each N when a directory is provided
