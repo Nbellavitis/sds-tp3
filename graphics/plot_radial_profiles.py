@@ -303,6 +303,7 @@ def aggregate_radial_profiles(entries, dS=0.2):
     ]
     rho_matrix = np.vstack([p[0] for p in per_run_profiles])
     v_matrix = np.vstack([p[1] for p in per_run_profiles])
+    v_abs_matrix = np.abs(v_matrix)
     j_matrix = np.vstack([p[2] for p in per_run_profiles])
 
     return (
@@ -310,7 +311,7 @@ def aggregate_radial_profiles(entries, dS=0.2):
         rho_mean,
         np.std(rho_matrix, axis=0, ddof=0),
         v_mean,
-        np.std(v_matrix, axis=0, ddof=0),
+        np.std(v_abs_matrix, axis=0, ddof=0),
         J_mean,
         np.std(j_matrix, axis=0, ddof=0),
     )
