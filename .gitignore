@@ -172,3 +172,4 @@ playwright-report/
 # --- Optional generated docs/site ---
 site/
 public/
+data/
