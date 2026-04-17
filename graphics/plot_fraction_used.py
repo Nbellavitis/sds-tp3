@@ -27,7 +27,7 @@ from matplotlib.ticker import MultipleLocator
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
 
 
 MANUAL_T_EST_BY_N = {

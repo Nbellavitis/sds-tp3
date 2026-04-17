@@ -225,7 +225,6 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
     ax.set_xlabel('Número de partículas $N$', fontsize=14)
     ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=14)
     ax.set_yscale('log')
-    ax.set_title(rf'Tiempo medido hasta $t={measurement_window:g}$ s simulados', fontsize=14)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=12)
     plt.tight_layout()

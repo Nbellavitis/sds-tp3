@@ -194,15 +194,15 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
     print(f"  playback time: ~{playback_seconds:.2f} s at {fps} fps and x{speed:.2f}")
     print(f"  MRU propagation error: max={max_err:.3e}, mean={mean_err:.3e}")
 
-    fig, ax = plt.subplots(figsize=(10, 10))
+    fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_aspect("equal")
     ax.set_xlim(-R_enclosure - 2.0, R_enclosure + 2.0)
     ax.set_ylim(-R_enclosure - 2.0, R_enclosure + 2.0)
-    ax.set_facecolor("#0E1726")
-    fig.patch.set_facecolor("#08111D")
+    ax.set_facecolor("white")
+    fig.patch.set_facecolor("white")
 
-    enclosure = Circle((0.0, 0.0), R_enclosure, fill=False, edgecolor="#E5E7EB", linewidth=2.0)
-    obstacle = Circle((0.0, 0.0), r0, facecolor="#6B7280", edgecolor="#D1D5DB", linewidth=1.5)
+    enclosure = Circle((0.0, 0.0), R_enclosure, fill=False, edgecolor="black", linewidth=1.8)
+    obstacle = Circle((0.0, 0.0), r0, facecolor="#9E9E9E", edgecolor="black", linewidth=1.0)
     ax.add_patch(enclosure)
     ax.add_patch(obstacle)
 
@@ -212,53 +212,11 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
         ax.add_patch(particle)
         particles.append(particle)
 
-    time_text = ax.text(
-        0.02,
-        0.98,
-        "",
-        transform=ax.transAxes,
-        color="white",
-        fontsize=13,
-        va="top",
-        bbox=dict(facecolor="black", alpha=0.55, edgecolor="none"),
-    )
-    count_text = ax.text(
-        0.02,
-        0.91,
-        "",
-        transform=ax.transAxes,
-        color="white",
-        fontsize=11,
-        va="top",
-        bbox=dict(facecolor="black", alpha=0.55, edgecolor="none"),
-    )
-    segment_text = ax.text(
-        0.02,
-        0.84,
-        "",
-        transform=ax.transAxes,
-        color="white",
-        fontsize=10,
-        va="top",
-        bbox=dict(facecolor="black", alpha=0.55, edgecolor="none"),
-    )
-
-    ax.text(
-        0.98,
-        0.98,
-        "Verde: fresca\nMagenta: usada",
-        transform=ax.transAxes,
-        ha="right",
-        va="top",
-        color="white",
-        fontsize=11,
-        bbox=dict(facecolor="black", alpha=0.55, edgecolor="none"),
-    )
-
-    ax.set_title("Sistema 1: animacion interpolada con MRU entre eventos", color="white", fontsize=15)
-    ax.set_xlabel("x [m]", color="white")
-    ax.set_ylabel("y [m]", color="white")
-    ax.tick_params(colors="white")
+    # Formato limpio tipo consigna: sin ejes ni etiquetas superpuestas.
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
     interval_ms = max(1, int(round(1000.0 / fps)))
 
@@ -266,8 +224,6 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
         x = frame_data["x"][frame_idx]
         y = frame_data["y"][frame_idx]
         used = frame_data["used"][frame_idx]
-        n_used = int(np.count_nonzero(used))
-        n_fresh = N - n_used
 
         for pid, particle in enumerate(particles):
             particle.center = (x[pid], y[pid])
@@ -278,16 +234,7 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
                 particle.set_facecolor(FRESH_FACE)
                 particle.set_edgecolor(FRESH_EDGE)
 
-        t = frame_times[frame_idx]
-        current_event_time = data["times"][frame_data["segment_idx"][frame_idx]]
-        time_text.set_text(f"t = {t:.4f} s")
-        count_text.set_text(f"Frescas: {n_fresh} | Usadas: {n_used}")
-        segment_text.set_text(
-            "MRU desde evento en "
-            f"{current_event_time:.4f} s | proximo en {frame_data['time_to_next'][frame_idx]:.4f} s"
-        )
-
-        return particles + [time_text, count_text, segment_text]
+        return particles
 
     anim = FuncAnimation(fig, update, frames=n_frames, interval=interval_ms, blit=False, repeat=True)
 
@@ -303,7 +250,7 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
         print(f"Animation saved to: {save_path}")
         plt.close(fig)
     else:
-        plt.tight_layout()
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
         plt.show()
 
 

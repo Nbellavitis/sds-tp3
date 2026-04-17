@@ -24,7 +24,8 @@ sds-tp3/
 │   ├── plot_fraction_used.py        # Inciso 1.3: F_u(t)
 │   ├── plot_radial_profiles.py      # Inciso 1.4: ρ(S), v(S), J_in(S) + vs N en S≈2
 │   ├── animate_system1_mru.py       # Animación interpolada con MRU entre eventos
-│   └── run_batch.py                 # Runner de batch para múltiples N y seeds
+│   ├── run_batch.py                 # Runner de batch para múltiples N y seeds
+│   └── run_animation_sim.py         # Runner separado para generar salidas densas para animación
 │
 ├── data/                            # Archivos de salida de la simulación
 │   └── sim_<N>N_<timestamp>_s<seed>.txt
@@ -80,6 +81,7 @@ java -cp engine/target/classes ar.edu.itba.sds.tp3.EventDrivenSimulation -N 200 
 | `-seed`   | Semilla para reproducibilidad   | aleatorio |
 | `-runs`   | Número de realizaciones         | 1       |
 | `-t_final` | Tiempo final de simulación [s] | 5.0     |
+| `-snapshot_every_events` | Guarda una snapshot cada K colisiones (para animación usar K=1 o K bajo) | 10 |
 | `--no-output` | No escribe `sim_*.txt`; útil para medir tiempo sin costo de I/O | desactivado |
 
 ### Múltiples realizaciones
@@ -230,6 +232,9 @@ python graphics/plot_radial_profiles.py data/                 # directorio
 ```bash
 python graphics/animate_system1_mru.py data/sim_300N_20260409_235938_s42.txt
 python graphics/animate_system1_mru.py data/sim_300N_20260409_235938_s42.txt --save anim.gif --fps 20 --speed 2.0
+
+# runner separado para generar archivos orientados a animación
+python graphics/run_animation_sim.py --n 300 --seed 42 --t-final 8.0 --snapshot-every-events 1
 ```
 
 ---
@@ -237,7 +242,7 @@ python graphics/animate_system1_mru.py data/sim_300N_20260409_235938_s42.txt --s
 ## Formato del Archivo de Salida
 
 ```
-# N=300 L=80.0 R_enclosure=40.0 r0=1.0 r=1.0 m=1.0 v0=1.0 t_final=5.0 snapshot_every_events=10
+# N=300 L=80.0 R_enclosure=40.0 r0=1.0 r=1.0 m=1.0 v0=1.0 t_final=5.0 snapshot_every_events=1
 # FORMAT: SNAPSHOT lines start with 'S', followed by time,
 # then N lines of: id x y vx vy state(F/U)
 # EVENT lines start with 'E': time id
@@ -247,11 +252,11 @@ S 0.000000e+00
 ...
 E 2.619697e+00 196       <-- F->U transition (for C_fc counting)
 ...
-S 2.619697e+00          <-- snapshot guardada cada 10 eventos, mas t=0 y el estado final
+S 2.619697e+00          <-- snapshot guardada cada K eventos (K configurable), mas t=0 y el estado final
 ...
 ```
 
-- **`S <time>`**: snapshot guardada en `t=0`, cada 10 colisiones procesadas y al final — seguida de N líneas con estado de cada partícula
+- **`S <time>`**: snapshot guardada en `t=0`, cada `K` colisiones procesadas y al final (con `K = snapshot_every_events`) — seguida de N líneas con estado de cada partícula
 - **`E <time> <id>`**: evento F→U — partícula fresca contactó el obstáculo central
 - Estado: `F` (fresca/verde) o `U` (usada/violeta)
 - Unidades MKS, notación científica

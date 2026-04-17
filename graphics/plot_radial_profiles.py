@@ -30,7 +30,7 @@ from analysis_cache import group_entries_by_N, load_analysis_entries, load_analy
 from plot_fraction_used import MANUAL_T_EST_BY_N
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
 STATIONARY_ACCUMULATORS_CACHE = {}
 
 

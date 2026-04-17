@@ -116,7 +116,7 @@ def build_n_values(args):
     if args.for_1_1:
         if args.n_max < 50:
             raise ValueError("--n-max must be at least 50 for --for-1-1")
-        return list(range(50, args.n_max + 1, 50))
+        return list(range(100, args.n_max + 1, 50))
 
     if args.n_values is not None:
         return args.n_values

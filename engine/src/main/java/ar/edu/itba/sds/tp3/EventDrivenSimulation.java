@@ -13,7 +13,7 @@ import java.util.*;
  * Obstacle:  fixed disc at origin, radius r0=1m, infinite mass.
  * Particles: N particles, radius r=1m, mass m=1kg, initial speed v0=1 m/s.
  *
- * Output: snapshots at t=0, every fixed number of collisions, and at the end.
+ * Output: snapshots at t=0, every configurable number of collisions, and at the end.
  */
 public class EventDrivenSimulation {
 
@@ -26,7 +26,7 @@ public class EventDrivenSimulation {
     private static final double V0 = 1.0;                    // initial speed [m/s]
     private static final double DEFAULT_T_FINAL = 5.0;       // default simulation end time [s]
     private static final double TIMING_WINDOW_1_1 = 5.0;     // simulated seconds measured for inciso 1.1
-    private static final int SNAPSHOT_EVERY_EVENTS = 10;     // keep one snapshot every N processed collisions
+    private static final int DEFAULT_SNAPSHOT_EVERY_EVENTS = 10; // keep one snapshot every N processed collisions
 
     // ── Data ─────────────────────────────────────────────────────────────
     private final int N;
@@ -37,6 +37,7 @@ public class EventDrivenSimulation {
     private final double tFinal;
     private final boolean writeOutput;
     private final String outputFilePath;
+    private final int snapshotEveryEvents;
 
     // ── Metrics ──────────────────────────────────────────────────────────
     private int totalCollisions;
@@ -66,7 +67,7 @@ public class EventDrivenSimulation {
         }
     }
 
-    public EventDrivenSimulation(int N, long seed, double tFinal, boolean writeOutput) {
+    public EventDrivenSimulation(int N, long seed, double tFinal, boolean writeOutput, int snapshotEveryEvents) {
         this.N = N;
         this.particles = new Particle[N];
         this.pq = new PriorityQueue<>();
@@ -74,8 +75,13 @@ public class EventDrivenSimulation {
         this.random = new Random(seed);
         this.tFinal = tFinal;
         this.writeOutput = writeOutput;
+        this.snapshotEveryEvents = snapshotEveryEvents;
         this.totalCollisions = 0;
         this.lastSnapshotTime = Double.NaN;
+
+        if (snapshotEveryEvents <= 0) {
+            throw new IllegalArgumentException("snapshot_every_events must be >= 1");
+        }
 
         if (writeOutput) {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
@@ -178,7 +184,7 @@ public class EventDrivenSimulation {
                 writer.println("# N=" + N + " L=" + L + " R_enclosure=" + ENCLOSURE_RADIUS
                         + " r0=" + OBSTACLE_RADIUS + " r=" + PARTICLE_RADIUS
                         + " m=" + PARTICLE_MASS + " v0=" + V0 + " t_final=" + tFinal
-                        + " snapshot_every_events=" + SNAPSHOT_EVERY_EVENTS);
+                        + " snapshot_every_events=" + snapshotEveryEvents);
                 writer.println("# FORMAT: SNAPSHOT lines start with 'S', followed by time,");
                 writer.println("# then N lines of: id x y vx vy state(F/U)");
                 writer.println("# EVENT lines start with 'E': time id");
@@ -251,7 +257,7 @@ public class EventDrivenSimulation {
                     }
                 }
 
-                if (writer != null && processedCollision && totalCollisions % SNAPSHOT_EVERY_EVENTS == 0) {
+                if (writer != null && processedCollision && totalCollisions % snapshotEveryEvents == 0) {
                     writeSnapshot(writer);
                 }
             }
@@ -310,6 +316,7 @@ public class EventDrivenSimulation {
         int runs = 1;         // number of independent realizations
         double tFinal = DEFAULT_T_FINAL;
         boolean writeOutput = true;
+        int snapshotEveryEvents = DEFAULT_SNAPSHOT_EVERY_EVENTS;
 
         // Parse command-line arguments
         for (int i = 0; i < args.length; i++) {
@@ -318,12 +325,17 @@ public class EventDrivenSimulation {
                 case "-seed" -> seed = Long.parseLong(args[++i]);
                 case "-runs" -> runs = Integer.parseInt(args[++i]);
                 case "-t", "-tf", "-t_final", "-tfinal" -> tFinal = Double.parseDouble(args[++i]);
+                case "-snapshot_every_events", "-snapshot-every-events", "--snapshot-every-events" ->
+                        snapshotEveryEvents = Integer.parseInt(args[++i]);
                 case "--no-output", "--timing-only" -> writeOutput = false;
             }
         }
 
         if (!Double.isFinite(tFinal) || tFinal <= 0.0) {
             throw new IllegalArgumentException("t_final must be a positive finite value");
+        }
+        if (snapshotEveryEvents <= 0) {
+            throw new IllegalArgumentException("snapshot_every_events must be >= 1");
         }
 
         System.out.println("=== Event-Driven Molecular Dynamics ===");
@@ -334,13 +346,16 @@ public class EventDrivenSimulation {
         System.out.println("Particle radius  = " + PARTICLE_RADIUS + " m, mass = " + PARTICLE_MASS + " kg");
         System.out.println("Initial speed    = " + V0 + " m/s");
         System.out.println("Runs = " + runs);
+        if (writeOutput) {
+            System.out.println("Snapshot every   = " + snapshotEveryEvents + " collisions");
+        }
         System.out.println();
 
         for (int run = 0; run < runs; run++) {
             long actualSeed = (seed < 0) ? System.nanoTime() : seed + run;
             System.out.println("--- Run " + (run + 1) + "/" + runs + " (seed=" + actualSeed + ") ---");
 
-            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal, writeOutput);
+            EventDrivenSimulation sim = new EventDrivenSimulation(N, actualSeed, tFinal, writeOutput, snapshotEveryEvents);
             RunTimings timings = sim.run();
             double totalMs = timings.getTotalElapsedNs() / 1e6;
             double timingWindowMs = timings.getElapsedToTimingWindowNs() / 1e6;

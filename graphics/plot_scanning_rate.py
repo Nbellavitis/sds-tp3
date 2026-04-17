@@ -250,7 +250,6 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
     
     ax2.set_xlabel('Tiempo $t$ [s]', fontsize=14)
     ax2.set_ylabel('$C_{fc}(t)$ [contactos acumulados]', fontsize=14)
-    ax2.set_title(rf'$C_{{fc}}(t)$ para $N={max_N}$', fontsize=14)
     ax2.text(
         0.02,
         0.98,
