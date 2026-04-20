@@ -190,9 +190,8 @@ python graphics/plot_scanning_rate.py
 - Lee `events_*.txt` para obtener las transiciones exactas `F->U`
 - Construye C_fc(t) y calcula J como la pendiente de la interpolación lineal
 - Para cada `N`, el punto mostrado es el promedio de los `J_r` de todas las realizaciones
-- Las barras verticales representan la desviación estándar poblacional entre realizaciones:
-  promedio: `J_prom(N) = (1/R) * sum_r J_r(N)`
-  error: `sigma_J(N) = sqrt((1/R) * sum_r (J_r(N) - J_prom(N))^2)`
+- Las barras verticales usan error estándar de la media: `SEM_J(N) = sigma_J(N)/sqrt(R)`
+- `sigma_J(N)` sigue siendo la desviación estándar poblacional entre realizaciones
 - El gráfico `C_fc(t)` se hace para el mayor `N` cargado y aclara dentro de la figura que las líneas sólidas son los contactos acumulados y las punteadas el ajuste lineal
 - **Genera:**
   - `graphics/output/inciso_1_2_scanning_rate.png` — ⟨J⟩ vs N con barras verticales de dispersión entre realizaciones
@@ -237,14 +236,19 @@ python graphics/plot_radial_profiles.py data/                 # directorio
 - Para cada corona, la velocidad radial media se calcula acumulando todas las partículas observadas en esa corona en todas las snapshots y realizaciones, y recién ahí se promedia
 - `ρ(S)` y `J_in(S)` se construyen a partir de esos acumuladores por snapshot; `J_in(S) = ρ(S) * |v(S)|`
 - Las barras verticales siguen mostrando la desviación estándar poblacional entre realizaciones
-- En los gráficos de `S≈2`, se toma la capa cuyo centro es el primero que cumple `S_c ≥ 2 m`
+- Para `J_fresh^{in}(N)` cerca del obstáculo, se promedian las capas con `S in [2,3]` (si no hubiera capas en ese rango, se usa la primera capa con `S_c >= 2`)
+- Se genera comparación directa entre `J_fresh^{in}(S in [2,3])` y `J(N)` (scanning rate)
+- Las barras verticales usan `SEM = std/sqrt(n)` para `rho`, `|v|` y `J_in`
 - **Genera:**
   - `graphics/output/inciso_1_4_rho_profile_N<N>.png` — perfil radial de `ρ(S)` para cada `N` seleccionado
   - `graphics/output/inciso_1_4_velocity_profile_N<N>.png` — perfil radial de `|v(S)|` para cada `N` seleccionado
   - `graphics/output/inciso_1_4_flux_profile_N<N>.png` — perfil radial de `J_in(S)` para cada `N` seleccionado
-  - `graphics/output/inciso_1_4_S2_rho_vs_N.png` — `ρ` en `S≈2` vs `N`
-  - `graphics/output/inciso_1_4_S2_velocity_vs_N.png` — `|v|` en `S≈2` vs `N`
-  - `graphics/output/inciso_1_4_S2_flux_vs_N.png` — `J_in` en `S≈2` vs `N`
+  - `graphics/output/inciso_1_4_S2_S3_rho_vs_N.png` — `ρ` en `S in [2,3]` vs `N`
+  - `graphics/output/inciso_1_4_S2_S3_velocity_vs_N.png` — `|v|` en `S in [2,3]` vs `N`
+  - `graphics/output/inciso_1_4_S2_S3_flux_vs_N.png` — `J_in` en `S in [2,3]` vs `N`
+  - `graphics/output/inciso_1_4_profiles_vs_S_by_N.png` — perfiles `rho(S)`, `|v(S)|`, `J_in(S)` para todos los `N` en una sola figura
+  - `graphics/output/inciso_1_4_profiles_vs_S_by_N_zoom_S2_S5.png` — mismo comparativo con zoom en `S in [2,5]`
+  - `graphics/output/inciso_1_4_jfresh_vs_scanning_rate.png` — `J_fresh^{in}(S in [2,3])` vs `N`, junto a `J(N)`
 
 ---
 

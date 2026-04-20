@@ -29,9 +29,13 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
+from plot_style import apply_plot_style, get_distinct_series_styles
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+
+
+apply_plot_style()
 
 
 MANUAL_T_EST_BY_N = {
@@ -50,7 +54,7 @@ MANUAL_T_EST_BY_N = {
     650: 800.0,
     700: 800.0,
     750: 900.0,
-    800: 900.0,
+    800: 1550.0,
 }
 
 def parse_simulation_file(filepath):
@@ -265,11 +269,11 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
             label='$F_u(t)$')
     t_est, f_est = add_stationary_reference_lines(ax, N, entry)
     
-    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
-    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
-    ax.legend(fontsize=11, loc='upper left')
+    ax.set_xlabel('Tiempo $t$ [s]', fontsize=17)
+    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=17)
+    ax.legend(fontsize=13, loc='upper left')
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
+    ax.tick_params(axis='both', labelsize=14)
     ylim_samples = np.array([0.0, float(np.max(fu)), f_est if f_est is not None else 0.0])
     ymin, ymax, ystep = get_fraction_ylim(ylim_samples)
     ax.set_ylim(ymin, ymax)
@@ -293,7 +297,7 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     metadata = entries[0]["metadata"]
     N = int(metadata['N'])
     n_runs = len(entries)
-    colors = plt.cm.tab10(np.linspace(0, 1, max(n_runs, 1)))
+    styles = get_distinct_series_styles(n_runs)
     max_fu = 0.0
     t_max = 0.0
 
@@ -306,17 +310,17 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
         max_fu = max(max_fu, float(np.max(fu)))
         t_max = max(t_max, float(times[-1]))
         ax.step(times, fu, where='post', alpha=0.85, linewidth=1.6,
-                color=colors[run_index - 1],
+                color=styles[run_index - 1]["color"],
                 label=describe_run(entry["source_path"], run_index))
 
     t_est, f_est = add_stationary_reference_lines(ax, N, entries)
 
-    ax.set_xlabel('Tiempo $t$ [s]', fontsize=14)
-    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=14)
-    ax.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5),
+    ax.set_xlabel('Tiempo $t$ [s]', fontsize=17)
+    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=17)
+    ax.legend(fontsize=12, loc='center left', bbox_to_anchor=(1.02, 0.5),
               borderaxespad=0.0)
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
+    ax.tick_params(axis='both', labelsize=14)
     ylim_samples = np.array([0.0, max_fu, f_est if f_est is not None else 0.0])
     ymin, ymax, ystep = get_fraction_ylim(ylim_samples)
     ax.set_ylim(ymin, ymax)
@@ -362,10 +366,10 @@ def plot_t_est_vs_N(files_by_N, output_dir="graphics/output"):
         markeredgecolor='#E65100',
     )
 
-    ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel(r'Tiempo estacionario $t_{est}$', fontsize=14)
+    ax.set_xlabel('Número de partículas $N$', fontsize=17)
+    ax.set_ylabel(r'Tiempo estacionario $t_{est}$', fontsize=17)
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
+    ax.tick_params(axis='both', labelsize=14)
     ax.set_xticks(N_values)
     ax.set_ylim(bottom=0.0)
 
@@ -417,10 +421,10 @@ def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
         markeredgecolor='#880E4F',
     )
 
-    ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel(r'Fracción estacionaria media $\langle F_{est} \rangle$', fontsize=14)
+    ax.set_xlabel('Número de partículas $N$', fontsize=17)
+    ax.set_ylabel(r'Fracción estacionaria media $\langle F_{est} \rangle$', fontsize=17)
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
+    ax.tick_params(axis='both', labelsize=14)
     ax.set_xticks(N_values)
     ax.set_ylim(bottom=0.0)
 

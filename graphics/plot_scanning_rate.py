@@ -29,6 +29,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
+from plot_style import apply_plot_style, get_distinct_series_styles
+
+
+apply_plot_style()
+
+
+def standard_error(std_value, sample_count):
+    """Return std/sqrt(n) for n>0, otherwise 0."""
+    n = float(sample_count)
+    if n <= 0:
+        return 0.0
+    return float(std_value) / np.sqrt(n)
 
 
 def parse_simulation_file(filepath):
@@ -197,29 +209,32 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
     
     N_values = sorted(files_by_N.keys())
     J_means = []
-    J_stds = []
-    
+    J_errs = []
+
     for N in N_values:
         J_list = []
         for entry in files_by_N[N]:
             J_list.append(float(entry["cfc"]["J"]))
         
-        J_means.append(np.mean(J_list))
-        J_stds.append(np.std(J_list))
-        print(f"  [1.2] N={N}: <J> = {np.mean(J_list):.4f} ± {np.std(J_list):.4f} contacts/s "
-              f"({len(J_list)} runs)")
-    
+        j_mean = float(np.mean(J_list))
+        j_std = float(np.std(J_list))
+        j_err = standard_error(j_std, len(J_list))
+        J_means.append(j_mean)
+        J_errs.append(j_err)
+        print(f"  [1.2] N={N}: <J> = {j_mean:.4f} ± {j_err:.4f} contacts/s "
+              f"(std={j_std:.4f}, n={len(J_list)})")
+
     # ── Plot <J>(N) ──────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(10, 7))
     
-    ax.errorbar(N_values, J_means, yerr=J_stds, fmt='s-', capsize=5,
+    ax.errorbar(N_values, J_means, yerr=J_errs, fmt='s-', capsize=5,
                 color='#9C27B0', ecolor='#CE93D8', markerfacecolor='#6A1B9A',
                 markeredgecolor='#4A148C', markersize=8, linewidth=2)
     
-    ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel(r'Scanning rate $\langle J \rangle$ [contactos/s]', fontsize=14)
+    ax.set_xlabel('Número de partículas $N$', fontsize=17)
+    ax.set_ylabel(r'Scanning rate $\langle J \rangle$ [contactos/s]', fontsize=17)
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
+    ax.tick_params(axis='both', labelsize=14)
     ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
     
     plt.tight_layout()
@@ -232,7 +247,7 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
     max_N = max(N_values)
     fig2, ax2 = plt.subplots(figsize=(13, 7))
     
-    colors = plt.cm.tab10(np.linspace(0, 1, max(len(files_by_N[max_N]), 1)))
+    series_styles = get_distinct_series_styles(len(files_by_N[max_N]))
 
     for run_index, entry in enumerate(files_by_N[max_N], start=1):
         fpath = entry["source_path"]
@@ -242,16 +257,31 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
         cfc = np.array(entry["cfc"]["values"], dtype=float)
         J = float(entry["cfc"]["J"])
         intercept = float(entry["cfc"]["intercept"])
-        color = colors[run_index - 1]
+        style = series_styles[run_index - 1]
+        color = style["color"]
 
-        ax2.step(times, cfc, where='post', alpha=0.8, linewidth=1.6, color=color)
-        
+        ax2.step(
+            times,
+            cfc,
+            where='post',
+            alpha=0.85,
+            linewidth=2.0,
+            color=color,
+        )
+
         # Linear fit line
         t_fit = np.linspace(0, t_final, 100)
-        ax2.plot(t_fit, J * t_fit + intercept, '--', alpha=0.8, color=color)
-    
-    ax2.set_xlabel('Tiempo $t$ [s]', fontsize=14)
-    ax2.set_ylabel('$C_{fc}(t)$ [contactos acumulados]', fontsize=14)
+        ax2.plot(
+            t_fit,
+            J * t_fit + intercept,
+            style["linestyle"],
+            alpha=0.85,
+            color=color,
+            linewidth=1.8,
+        )
+
+    ax2.set_xlabel('Tiempo $t$ [s]', fontsize=17)
+    ax2.set_ylabel('$C_{fc}(t)$ [contactos acumulados]', fontsize=17)
     ax2.text(
         0.02,
         0.98,
@@ -259,12 +289,12 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
         transform=ax2.transAxes,
         va='top',
         ha='left',
-        fontsize=11,
+        fontsize=13,
         bbox=dict(boxstyle='round,pad=0.35', facecolor='white', alpha=0.9, edgecolor='#BDBDBD'),
     )
     ax2.grid(True, alpha=0.3, linestyle='--')
-    ax2.tick_params(axis='both', labelsize=12)
-    
+    ax2.tick_params(axis='both', labelsize=14)
+
     plt.tight_layout()
     outpath2 = os.path.join(output_dir, "inciso_1_2_cfc_curve.png")
     plt.savefig(outpath2, dpi=150, bbox_inches='tight')

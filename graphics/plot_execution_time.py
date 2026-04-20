@@ -19,8 +19,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from plot_style import apply_plot_style
+
 
 DEFAULT_MEASUREMENT_WINDOW_1_1 = 5.0
+
+
+apply_plot_style()
 
 
 def parse_runtime_report(stdout):
@@ -227,11 +232,11 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
         linewidth=2,
     )
 
-    ax.set_xlabel('Número de partículas $N$', fontsize=14)
-    ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=14)
+    ax.set_xlabel('Número de partículas $N$', fontsize=17)
+    ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=17)
     ax.set_yscale('log')
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=12)
+    ax.tick_params(axis='both', labelsize=14)
     plt.tight_layout()
     outpath = os.path.join(output_dir, "inciso_1_1_execution_time.png")
     plt.savefig(outpath, dpi=150, bbox_inches='tight')

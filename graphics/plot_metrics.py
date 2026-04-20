@@ -19,10 +19,15 @@ from plot_fraction_used import (
     plot_t_est_vs_N,
     plot_f_est_vs_N,
 )
-from plot_radial_profiles import plot_radial_profiles, plot_radial_profiles_ensemble, plot_at_S2_vs_N
+from plot_radial_profiles import (
+    plot_radial_profiles,
+    plot_radial_profiles_ensemble,
+    plot_near_obstacle_vs_scanning_rate,
+    plot_profiles_comparison_by_N,
+)
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
 
 
 def main():
@@ -79,8 +84,9 @@ def main():
         print("\n=== Inciso 1.4: Radial Profiles ===")
         for N in selected_profile_ns:
             plot_radial_profiles_ensemble(files_by_N[N], output_dir)
+        plot_profiles_comparison_by_N(files_by_N, output_dir)
         if len(files_by_N) > 1:
-            plot_at_S2_vs_N(files_by_N, output_dir)
+            plot_near_obstacle_vs_scanning_rate(files_by_N, output_dir)
     else:
         print(f"Error: '{path}' is not a valid file or directory.")
         sys.exit(1)

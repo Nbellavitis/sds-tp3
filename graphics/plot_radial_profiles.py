@@ -12,7 +12,7 @@ Per the enunciado:
     by pooling all saved particles in each shell before averaging
   - J_in(S) = <rho_f^in>(S) * |<vf_in>(S)|
 - Plot 3 curves: <rho_f^in>(S), |<vf_in>(S)|, J_in(S)
-- For S ≈ 2: plot J_in, <rho_f^in>, <vf_in> as functions of N
+- Near obstacle S in [2,3]: plot J_in, <rho_f^in>, <vf_in> as functions of N
 
 Usage:
     python graphics/plot_radial_profiles.py data/sim_300N_file.txt
@@ -28,10 +28,60 @@ import matplotlib.pyplot as plt
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 from plot_fraction_used import MANUAL_T_EST_BY_N
+from plot_style import apply_plot_style, get_distinct_series_styles
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 700}
+DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+NEAR_OBSTACLE_S_RANGE = (2.0, 3.0)
+ZOOM_S_RANGE = (2.0, 5.0)
 STATIONARY_ACCUMULATORS_CACHE = {}
+
+
+apply_plot_style()
+
+
+def std_to_sem(std_values, sample_counts):
+    """Convert standard deviation arrays to standard error arrays (std/sqrt(n))."""
+    std_values = np.asarray(std_values, dtype=float)
+    sample_counts = np.asarray(sample_counts, dtype=float)
+    sem = np.zeros_like(std_values, dtype=float)
+    valid = sample_counts > 0.0
+    sem[valid] = std_values[valid] / np.sqrt(sample_counts[valid])
+    return sem
+
+
+def propagate_flux_error(rho_mean, v_mean, rho_err, v_err):
+    """First-order uncertainty propagation for J = rho * |v|."""
+    rho_mean = np.asarray(rho_mean, dtype=float)
+    v_mean = np.asarray(v_mean, dtype=float)
+    rho_err = np.asarray(rho_err, dtype=float)
+    v_err = np.asarray(v_err, dtype=float)
+    return np.sqrt((np.abs(v_mean) * rho_err) ** 2 + (rho_mean * v_err) ** 2)
+
+
+def reduce_shell_band(values, errors, shell_mask):
+    """Average one observable over a shell band and combine independent errors."""
+    band_values = np.asarray(values, dtype=float)[shell_mask]
+    band_errors = np.asarray(errors, dtype=float)[shell_mask]
+    if band_values.size == 0:
+        return np.nan, np.nan
+    mean_value = float(np.mean(band_values))
+    combined_error = float(np.sqrt(np.sum(band_errors ** 2)) / band_values.size)
+    return mean_value, combined_error
+
+
+def pick_shell_band_mask(S_centers, s_min, s_max):
+    """Pick shells inside [s_min, s_max], fallback to the first shell with center >= s_min."""
+    S_centers = np.asarray(S_centers, dtype=float)
+    mask = (S_centers >= s_min) & (S_centers <= s_max)
+    if np.any(mask):
+        return mask
+    fallback_idx = np.where(S_centers >= s_min)[0]
+    if fallback_idx.size == 0:
+        fallback_idx = np.array([len(S_centers) - 1])
+    mask = np.zeros_like(S_centers, dtype=bool)
+    mask[fallback_idx[0]] = True
+    return mask
 
 
 def parse_metadata_tokens(line, metadata):
@@ -330,21 +380,41 @@ def aggregate_radial_profiles(entries, dS=0.2):
         pooled_vf_in_sq_sum,
     )
 
-    per_run_profiles = [
-        derive_profiles_from_accumulators(snapshot_count, shell_areas, count_sum, vf_in_sum)
-        for _, _, snapshot_count, count_sum, _, _, vf_in_sum, _ in accumulators
-    ]
-    j_matrix = np.vstack([p[2] for p in per_run_profiles])
+    rho_err = std_to_sem(rho_std, np.full_like(rho_std, pooled_snapshot_count, dtype=float))
+    v_err = std_to_sem(v_std, pooled_velocity_sample_count)
+    J_err = propagate_flux_error(rho_mean, v_mean, rho_err, v_err)
 
     return (
         S_centers,
         rho_mean,
-        rho_std,
+        rho_err,
         v_mean,
-        v_std,
+        v_err,
         J_mean,
-        np.std(j_matrix, axis=0, ddof=0),
+        J_err,
     )
+
+
+def extract_profile_statistics_for_entries(entries, dS=0.2):
+    """Convenience wrapper: pooled profile means + SEM errors for one N."""
+    S_centers, rho_mean, rho_err, v_mean, v_err, J_mean, J_err = aggregate_radial_profiles(entries, dS)
+    return {
+        "S_centers": S_centers,
+        "rho_mean": rho_mean,
+        "rho_err": rho_err,
+        "v_mean": v_mean,
+        "v_err": v_err,
+        "J_mean": J_mean,
+        "J_err": J_err,
+    }
+
+
+def collect_profiles_by_N(files_by_N, dS=0.2):
+    """Compute pooled radial statistics for each N once."""
+    profile_by_N = {}
+    for N in sorted(files_by_N.keys()):
+        profile_by_N[N] = extract_profile_statistics_for_entries(files_by_N[N], dS)
+    return profile_by_N
 
 
 def derive_profiles_from_accumulators(snapshot_count, shell_areas, count_sum, vf_in_sum):
@@ -483,10 +553,10 @@ def save_profile_plot(
             linewidth=linewidth,
         )
 
-    ax.set_xlabel(xlabel, fontsize=13)
-    ax.set_ylabel(ylabel, fontsize=13)
+    ax.set_xlabel(xlabel, fontsize=17)
+    ax.set_ylabel(ylabel, fontsize=17)
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.tick_params(axis='both', labelsize=11)
+    ax.tick_params(axis='both', labelsize=14)
 
     if xticks is not None:
         ax.set_xticks(xticks)
@@ -584,16 +654,16 @@ def save_s2_vs_n_figures(
     v_err,
     J_err,
 ):
-    """Save one file per observable for the shell nearest S≈2."""
+    """Save one file per observable averaged in the near-obstacle band S in [2,3]."""
     outputs = []
 
-    rho_outpath = os.path.join(output_dir, "inciso_1_4_S2_rho_vs_N.png")
+    rho_outpath = os.path.join(output_dir, "inciso_1_4_S2_S3_rho_vs_N.png")
     save_profile_plot(
         N_values,
         rho_values,
         rho_outpath,
         'Número de partículas $N$',
-        r'$\langle \rho_f^{in} \rangle$ [part/m²] en $S \approx 2$ m',
+        r'$\langle \rho_f^{in} \rangle$ [part/m²] en $S \in [2,3]$ m',
         fmt='o-',
         color='#1B5E20',
         markerfacecolor='#4CAF50',
@@ -607,13 +677,13 @@ def save_s2_vs_n_figures(
     )
     outputs.append(rho_outpath)
 
-    v_outpath = os.path.join(output_dir, "inciso_1_4_S2_velocity_vs_N.png")
+    v_outpath = os.path.join(output_dir, "inciso_1_4_S2_S3_velocity_vs_N.png")
     save_profile_plot(
         N_values,
         v_values,
         v_outpath,
         'Número de partículas $N$',
-        r'$|\langle v_f^{in} \rangle|$ [m/s] en $S \approx 2$ m',
+        r'$|\langle v_f^{in} \rangle|$ [m/s] en $S \in [2,3]$ m',
         fmt='s-',
         color='#0D47A1',
         markerfacecolor='#2196F3',
@@ -626,13 +696,13 @@ def save_s2_vs_n_figures(
     )
     outputs.append(v_outpath)
 
-    j_outpath = os.path.join(output_dir, "inciso_1_4_S2_flux_vs_N.png")
+    j_outpath = os.path.join(output_dir, "inciso_1_4_S2_S3_flux_vs_N.png")
     save_profile_plot(
         N_values,
         J_values,
         j_outpath,
         'Número de partículas $N$',
-        r'$J_{in}$ [part/(m²·s)] en $S \approx 2$ m',
+        r'$J_{in}$ [part/(m²·s)] en $S \in [2,3]$ m',
         fmt='D-',
         color='#BF360C',
         markerfacecolor='#FF5722',
@@ -647,6 +717,166 @@ def save_s2_vs_n_figures(
     outputs.append(j_outpath)
 
     return outputs
+
+
+def compute_zoom_y_limits(profile_by_N, key_mean, key_err, x_min, x_max):
+    """Compute y-limits from samples inside the zoomed x-window."""
+    y_min = np.inf
+    y_max = -np.inf
+
+    for stats in profile_by_N.values():
+        S_centers = np.asarray(stats["S_centers"], dtype=float)
+        mask = (S_centers >= x_min) & (S_centers <= x_max)
+        if not np.any(mask):
+            continue
+        y = np.asarray(stats[key_mean], dtype=float)
+        if key_mean == "v_mean":
+            y = np.abs(y)
+        y_err = np.asarray(stats[key_err], dtype=float)
+        low = np.nanmin(y[mask] - y_err[mask])
+        high = np.nanmax(y[mask] + y_err[mask])
+        y_min = min(y_min, float(low))
+        y_max = max(y_max, float(high))
+
+    if not np.isfinite(y_min) or not np.isfinite(y_max):
+        return None
+
+    if y_max - y_min < 1e-12:
+        margin = 0.1 * max(abs(y_max), 1.0)
+    else:
+        margin = 0.08 * (y_max - y_min)
+
+    lower = max(0.0, y_min - margin)
+    upper = y_max + margin
+    if upper <= lower:
+        upper = lower + 1.0
+    return lower, upper
+
+
+def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
+    """Save rho, |v| and J profiles in the same figure for multiple N."""
+    os.makedirs(output_dir, exist_ok=True)
+    N_values = sorted(profile_by_N.keys())
+    styles = get_distinct_series_styles(len(N_values))
+    zoom_suffix = "" if zoom_range is None else "_zoom_S2_S5"
+    outpath = os.path.join(output_dir, f"inciso_1_4_profiles_vs_S_by_N{zoom_suffix}.png")
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 7), sharex=True)
+    labels = [
+        (r'$\langle \rho_f^{in} \rangle$ [part/m$^2$]', "rho_mean", "rho_err", '#1B5E20'),
+        (r'$|\langle v_f^{in} \rangle|$ [m/s]', "v_mean", "v_err", '#0D47A1'),
+        (r'$J_{in}$ [part/(m$^2$\u00b7s)]', "J_mean", "J_err", '#BF360C'),
+    ]
+
+    zoom_y_limits = [None, None, None]
+    if zoom_range is not None:
+        for idx, (_, key_mean, key_err, _) in enumerate(labels):
+            zoom_y_limits[idx] = compute_zoom_y_limits(
+                profile_by_N,
+                key_mean,
+                key_err,
+                zoom_range[0],
+                zoom_range[1],
+            )
+
+    for style, N in zip(styles, N_values):
+        stats = profile_by_N[N]
+        S_centers = stats["S_centers"]
+        for axis, (_, key_mean, key_err, _) in zip(axes, labels):
+            y = np.abs(stats[key_mean]) if key_mean == "v_mean" else stats[key_mean]
+            axis.errorbar(
+                S_centers,
+                y,
+                yerr=stats[key_err],
+                fmt=f'{style["marker"]}{style["linestyle"]}',
+                linewidth=1.8,
+                markersize=4.5,
+                capsize=2,
+                alpha=0.95,
+                color=style["color"],
+                label=f'N={N}',
+            )
+
+    for idx, (axis, (ylabel, _, _, axis_color)) in enumerate(zip(axes, labels)):
+        axis.set_xlabel('Distancia radial $S$ [m]', fontsize=16)
+        axis.set_ylabel(ylabel, color=axis_color, fontsize=16)
+        axis.grid(True, alpha=0.25, linestyle='--')
+        axis.tick_params(axis='both', labelsize=13)
+        if zoom_range is not None:
+            axis.set_xlim(zoom_range[0], zoom_range[1])
+            y_limits = zoom_y_limits[idx]
+            if y_limits is not None:
+                axis.set_ylim(y_limits[0], y_limits[1])
+
+    handles, legends = axes[0].get_legend_handles_labels()
+    fig.legend(handles, legends, loc='upper center', ncol=min(len(N_values), 6), fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.savefig(outpath, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return outpath
+
+
+def save_near_obstacle_vs_scanning_figure(N_values, J_fresh, J_fresh_err, J_scan, J_scan_err, output_dir):
+    """Compare J_fresh^in near obstacle with scanning-rate J(N)."""
+    os.makedirs(output_dir, exist_ok=True)
+    outpath = os.path.join(output_dir, 'inciso_1_4_jfresh_vs_scanning_rate.png')
+
+    fig, ax_left = plt.subplots(figsize=(10, 7))
+    ax_right = ax_left.twinx()
+
+    left_line = ax_left.errorbar(
+        N_values,
+        J_fresh,
+        yerr=J_fresh_err,
+        fmt='D-',
+        capsize=5,
+        linewidth=2,
+        color='#BF360C',
+        markerfacecolor='#FF5722',
+        markeredgecolor='#BF360C',
+        label=r'$J_{fresh}^{in}(S\in[2,3])$',
+    )
+    right_line = ax_right.errorbar(
+        N_values,
+        J_scan,
+        yerr=J_scan_err,
+        fmt='s--',
+        capsize=5,
+        linewidth=2,
+        color='#6A1B9A',
+        markerfacecolor='#9C27B0',
+        markeredgecolor='#4A148C',
+        label=r'$\langle J \rangle$ (scanning rate)',
+    )
+
+    ax_left.set_xlabel('Numero de particulas $N$', fontsize=17)
+    ax_left.set_ylabel(r'$J_{fresh}^{in}$ [part/(m$^2$\u00b7s)]', color='#BF360C', fontsize=17)
+    ax_right.set_ylabel(r'$\langle J \rangle$ [contactos/s]', color='#6A1B9A', fontsize=17)
+    ax_left.set_xticks(N_values)
+    ax_left.grid(True, alpha=0.3, linestyle='--')
+    ax_left.tick_params(axis='both', labelsize=14)
+    ax_right.tick_params(axis='both', labelsize=14)
+
+    handles = [left_line, right_line]
+    labels = [h.get_label() for h in handles]
+    ax_left.legend(handles, labels, loc='best', fontsize=13)
+
+    plt.tight_layout()
+    plt.savefig(outpath, dpi=150, bbox_inches='tight')
+    plt.close()
+    return outpath
+
+
+def compute_scanning_rate_summary(files_by_N):
+    """Compute mean and SEM of scanning rate J for each N from cached entries."""
+    N_values = sorted(files_by_N.keys())
+    means = []
+    errs = []
+    for N in N_values:
+        j_values = np.array([float(entry["cfc"]["J"]) for entry in files_by_N[N]], dtype=float)
+        means.append(float(np.mean(j_values)))
+        errs.append(float(np.std(j_values) / np.sqrt(len(j_values))) if len(j_values) > 0 else 0.0)
+    return N_values, np.array(means, dtype=float), np.array(errs, dtype=float)
 
 
 def plot_radial_profiles(entry=None, filepath=None, output_dir="graphics/output", dS=0.2):
@@ -706,7 +936,7 @@ def plot_radial_profiles_ensemble(entries, output_dir="graphics/output", dS=0.2)
     metadata = entries[0]["metadata"]
     N = int(metadata['N'])
     t_est = MANUAL_T_EST_BY_N.get(N)
-    S_centers, rho_mean, rho_std, v_mean, v_std, J_mean, J_std = \
+    S_centers, rho_mean, rho_err, v_mean, v_err, J_mean, J_err = \
         aggregate_radial_profiles(entries, dS)
 
     outpaths = save_radial_profile_figures(
@@ -716,28 +946,25 @@ def plot_radial_profiles_ensemble(entries, output_dir="graphics/output", dS=0.2)
         v_mean,
         J_mean,
         output_dir,
-        rho_err=rho_std,
-        v_err=v_std,
-        J_err=J_std,
+        rho_err=rho_err,
+        v_err=v_err,
+        J_err=J_err,
     )
     for outpath in outpaths:
         print(f"  [1.4] Saved: {outpath}")
-    print(f"  [1.4] N={N}: promedio y desvío poblacional calculados con t>=t_est ({t_est}).")
+    print(f"  [1.4] N={N}: promedio y barras SEM (std/sqrt(n)) calculados con t>=t_est ({t_est}).")
 
     return S_centers, rho_mean, v_mean, J_mean
 
 
-def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
+def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2, s_range=NEAR_OBSTACLE_S_RANGE):
     """
-    For the shell at S ≈ 2m, plot J_in, <rho_f^in>, and |<vf_in>| as functions of N.
-    
-    Required by the enunciado: "Para la capa cercana a S=2, graficar Jin, 
-    <ρ_f^in>, y <v_f^in> en función de N."
+    For the near-obstacle band S in [2,3], plot J_in, <rho_f^in>, and |<vf_in>| vs N.
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    S_target = 2.0  # the enunciado specifies S ≈ 2
-    
+    s_min, s_max = s_range
+
     N_values = sorted(files_by_N.keys())
     rho_at_S2 = []
     v_at_S2 = []
@@ -746,47 +973,19 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
     v_err = []
     j_err = []
     for N in N_values:
-        per_run_profiles = []
-        stationary_data = [extract_stationary_accumulators(entry, dS) for entry in files_by_N[N]]
-        accumulators = [item[0] for item in stationary_data]
-        S_centers = accumulators[0][0]
-        shell_areas = accumulators[0][1]
+        stats = extract_profile_statistics_for_entries(files_by_N[N], dS)
+        shell_mask = pick_shell_band_mask(stats["S_centers"], s_min, s_max)
 
-        idx = np.where(S_centers >= S_target)[0][0]
+        rho_mean_band, rho_err_band = reduce_shell_band(stats["rho_mean"], stats["rho_err"], shell_mask)
+        v_mean_band, v_err_band = reduce_shell_band(np.abs(stats["v_mean"]), stats["v_err"], shell_mask)
+        J_mean_band, J_err_band = reduce_shell_band(stats["J_mean"], stats["J_err"], shell_mask)
 
-        pooled_snapshot_count = sum(acc[2] for acc in accumulators)
-        pooled_count_sum = np.sum([acc[3] for acc in accumulators], axis=0)
-        pooled_count_sq_sum = np.sum([acc[4] for acc in accumulators], axis=0)
-        pooled_velocity_sample_count = np.sum([acc[5] for acc in accumulators], axis=0)
-        pooled_vf_in_sum = np.sum([acc[6] for acc in accumulators], axis=0)
-        pooled_vf_in_sq_sum = np.sum([acc[7] for acc in accumulators], axis=0)
-        rho_pooled, rho_pooled_std, v_pooled, v_pooled_std, J_pooled = \
-            derive_profiles_from_stationary_samples(
-            pooled_snapshot_count,
-            shell_areas,
-            pooled_count_sum,
-            pooled_count_sq_sum,
-            pooled_velocity_sample_count,
-            pooled_vf_in_sum,
-            pooled_vf_in_sq_sum,
-        )
-
-        for _, _, snapshot_count, count_sum, _, _, vf_in_sum, _ in accumulators:
-            per_run_profiles.append(
-                derive_profiles_from_accumulators(
-                    snapshot_count,
-                    shell_areas,
-                    count_sum,
-                    vf_in_sum,
-                )
-            )
-
-        rho_at_S2.append(rho_pooled[idx])
-        v_at_S2.append(np.abs(v_pooled[idx]))
-        J_at_S2.append(J_pooled[idx])
-        rho_err.append(rho_pooled_std[idx])
-        v_err.append(v_pooled_std[idx])
-        j_err.append(np.std([profile[2][idx] for profile in per_run_profiles], ddof=0))
+        rho_at_S2.append(rho_mean_band)
+        v_at_S2.append(v_mean_band)
+        J_at_S2.append(J_mean_band)
+        rho_err.append(rho_err_band)
+        v_err.append(v_err_band)
+        j_err.append(J_err_band)
 
     outpaths = save_s2_vs_n_figures(
         N_values,
@@ -800,6 +999,53 @@ def plot_at_S2_vs_N(files_by_N, output_dir="graphics/output", dS=0.2):
     )
     for outpath in outpaths:
         print(f"  [1.4] Saved: {outpath}")
+
+    return (
+        np.array(N_values, dtype=float),
+        np.array(rho_at_S2, dtype=float),
+        np.array(v_at_S2, dtype=float),
+        np.array(J_at_S2, dtype=float),
+        np.array(rho_err, dtype=float),
+        np.array(v_err, dtype=float),
+        np.array(j_err, dtype=float),
+    )
+
+
+def plot_profiles_comparison_by_N(files_by_N, output_dir="graphics/output", dS=0.2, zoom_range=ZOOM_S_RANGE):
+    """Plot radial profiles vs S for all N in one figure (+zoom)."""
+    profile_by_N = collect_profiles_by_N(files_by_N, dS)
+    full_path = save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None)
+    zoom_path = save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=zoom_range)
+    print(f"  [1.4] Saved: {full_path}")
+    print(f"  [1.4] Saved: {zoom_path}")
+
+
+def plot_near_obstacle_vs_scanning_rate(files_by_N, output_dir="graphics/output", dS=0.2, s_range=NEAR_OBSTACLE_S_RANGE):
+    """Compare near-obstacle J_fresh^in(N) with scanning-rate J(N)."""
+    s2_data = plot_at_S2_vs_N(files_by_N, output_dir, dS=dS, s_range=s_range)
+    N_values = s2_data[0].astype(int)
+    J_fresh = s2_data[3]
+    J_fresh_err = s2_data[6]
+
+    N_scan, J_scan, J_scan_err = compute_scanning_rate_summary(files_by_N)
+    scan_lookup = {N: (J_scan[idx], J_scan_err[idx]) for idx, N in enumerate(N_scan)}
+
+    aligned_J_scan = []
+    aligned_J_scan_err = []
+    for N in N_values:
+        mean_scan, err_scan = scan_lookup[int(N)]
+        aligned_J_scan.append(mean_scan)
+        aligned_J_scan_err.append(err_scan)
+
+    compare_path = save_near_obstacle_vs_scanning_figure(
+        N_values,
+        J_fresh,
+        J_fresh_err,
+        np.array(aligned_J_scan, dtype=float),
+        np.array(aligned_J_scan_err, dtype=float),
+        output_dir,
+    )
+    print(f"  [1.4] Saved: {compare_path}")
 
 
 if __name__ == '__main__':
@@ -822,10 +1068,12 @@ if __name__ == '__main__':
         # Plot radial profiles for each N using all realizations.
         for N in selected_profile_ns:
             plot_radial_profiles_ensemble(files_by_N[N])
-        
-        # Plot S≈2 vs N
+
+        plot_profiles_comparison_by_N(files_by_N)
+
+        # Plot S∈[2,3] vs N and compare with scanning rate.
         if len(files_by_N) > 1:
-            plot_at_S2_vs_N(files_by_N)
+            plot_near_obstacle_vs_scanning_rate(files_by_N)
     else:
         print(f"Error: '{path}' not found.")
         sys.exit(1)

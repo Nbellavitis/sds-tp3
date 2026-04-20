@@ -71,7 +71,7 @@ reports/
 hs_err_pid*
 replay_pid*
 dependency-reduced-pom.xml
-
+data
 # --- Node / JS / TS ---
 node_modules/
 .npm/
