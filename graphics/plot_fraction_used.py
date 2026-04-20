@@ -48,7 +48,7 @@ MANUAL_T_EST_BY_N = {
     350: 500.0,
     400: 500.0,
     450: 600.0,
-    500: 600.0,
+    500: 750.0,
     550: 700.0,
     600: 700.0,
     650: 800.0,
@@ -316,7 +316,7 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     t_est, f_est = add_stationary_reference_lines(ax, N, entries)
 
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=17)
-    ax.set_ylabel('Fracción de partículas usadas $F_u(t) = N_u(t)/N$', fontsize=17)
+    ax.set_ylabel('Fracción de partículas usadas $F_u(t)', fontsize=17)
     ax.legend(fontsize=12, loc='center left', bbox_to_anchor=(1.02, 0.5),
               borderaxespad=0.0)
     ax.grid(True, alpha=0.3, linestyle='--')
