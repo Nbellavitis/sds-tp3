@@ -1,9 +1,8 @@
 """
-animate_system1_mru.py - Event-aware animation for System 1
+animate_system1_mru.py - Snapshot animation for System 1
 
-Builds a smooth animation from event snapshots. Between consecutive event
-times, each particle is propagated with MRU using the velocity stored in the
-current snapshot.
+Builds a discrete animation directly from saved snapshots in sim_*.txt.
+No interpolation is performed between snapshots.
 
 Usage:
     python graphics/animate_system1_mru.py data/sim_100N_20260410_1530.txt
@@ -106,63 +105,14 @@ def parse_simulation_file(filepath):
     }
 
 
-def compute_propagation_error(data):
-    """
-    Check that propagating each snapshot with MRU reaches the next one.
-
-    For event-driven output, positions are continuous across collisions, so the
-    mismatch should remain near machine precision.
-    """
-    times = data["times"]
-    if len(times) < 2:
-        return 0.0, 0.0
-
-    dt = (times[1:] - times[:-1])[:, None]
-    pred_x = data["x"][:-1] + data["vx"][:-1] * dt
-    pred_y = data["y"][:-1] + data["vy"][:-1] * dt
-
-    error = np.sqrt((pred_x - data["x"][1:]) ** 2 + (pred_y - data["y"][1:]) ** 2)
-    return float(np.max(error)), float(np.mean(error))
-
-
-def build_frame_times(snapshot_times, fps, speed):
-    """Create uniformly spaced display times across the simulated interval."""
-    t_start = float(snapshot_times[0])
-    t_end = float(snapshot_times[-1])
-    if t_end <= t_start:
-        return np.array([t_start], dtype=float)
-
-    sim_dt_per_frame = speed / fps
-    n_frames = max(2, int(np.ceil((t_end - t_start) / sim_dt_per_frame)) + 1)
-    return np.linspace(t_start, t_end, n_frames)
-
-
-def interpolate_frames(data, frame_times):
-    """Interpolate particle positions at arbitrary frame times using MRU."""
-    snapshot_times = data["times"]
-    segment_idx = np.searchsorted(snapshot_times, frame_times, side="right") - 1
-    segment_idx = np.clip(segment_idx, 0, len(snapshot_times) - 1)
-
-    dt = frame_times - snapshot_times[segment_idx]
-    x = data["x"][segment_idx] + data["vx"][segment_idx] * dt[:, None]
-    y = data["y"][segment_idx] + data["vy"][segment_idx] * dt[:, None]
-    used = data["used"][segment_idx]
-
-    next_idx = np.clip(segment_idx + 1, 0, len(snapshot_times) - 1)
-    next_event_time = snapshot_times[next_idx]
-    time_to_next = np.maximum(0.0, next_event_time - frame_times)
-
-    return {
-        "x": x,
-        "y": y,
-        "used": used,
-        "segment_idx": segment_idx,
-        "time_to_next": time_to_next,
-    }
+def select_snapshot_indices(snapshot_count, speed):
+    """Select discrete snapshot indices, optionally skipping with speed>1."""
+    stride = max(1, int(round(speed)))
+    return np.arange(0, snapshot_count, stride, dtype=int), stride
 
 
 def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
-    """Create and optionally save an interpolated animation."""
+    """Create and optionally save a snapshot-only animation."""
     if fps <= 0:
         raise ValueError("fps must be positive")
     if speed <= 0:
@@ -176,23 +126,18 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
     r0 = float(metadata["r0"])
     r_particle = float(metadata["r"])
     snapshot_every_events = int(metadata.get("snapshot_every_events", 1))
-
-    frame_times = build_frame_times(data["times"], fps=fps, speed=speed)
-    frame_data = interpolate_frames(data, frame_times)
-    n_frames = len(frame_times)
-    max_err, mean_err = compute_propagation_error(data)
-
-    playback_seconds = (frame_times[-1] - frame_times[0]) / speed
+    frame_indices, snapshot_stride = select_snapshot_indices(len(data["times"]), speed)
+    frame_times = data["times"][frame_indices]
+    n_frames = len(frame_indices)
+    playback_seconds = n_frames / fps
     print(f"Animating {os.path.basename(filepath)}")
     print(f"  N={N}, snapshots={len(data['times'])}, frames={n_frames}")
     if snapshot_every_events > 1:
-        print(
-            f"  WARNING: snapshots were saved every {snapshot_every_events} collisions; "
-            "the animation is approximate between saved events."
-        )
+        print(f"  Note: file was saved every {snapshot_every_events} collisions (discrete snapshot playback).")
+    if snapshot_stride > 1:
+        print(f"  Using one every {snapshot_stride} snapshots due to speed={speed:.2f}")
     print(f"  simulated time: {frame_times[0]:.3f} s -> {frame_times[-1]:.3f} s")
-    print(f"  playback time: ~{playback_seconds:.2f} s at {fps} fps and x{speed:.2f}")
-    print(f"  MRU propagation error: max={max_err:.3e}, mean={mean_err:.3e}")
+    print(f"  playback time: ~{playback_seconds:.2f} s at {fps} fps")
 
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_aspect("equal")
@@ -221,9 +166,10 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
     interval_ms = max(1, int(round(1000.0 / fps)))
 
     def update(frame_idx):
-        x = frame_data["x"][frame_idx]
-        y = frame_data["y"][frame_idx]
-        used = frame_data["used"][frame_idx]
+        snapshot_idx = frame_indices[frame_idx]
+        x = data["x"][snapshot_idx]
+        y = data["y"][snapshot_idx]
+        used = data["used"][snapshot_idx]
 
         for pid, particle in enumerate(particles):
             particle.center = (x[pid], y[pid])
@@ -256,7 +202,7 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Animate System 1 using MRU interpolation between event snapshots."
+        description="Animate System 1 using saved snapshots only (no interpolation)."
     )
     parser.add_argument("file", help="Path to one simulation output file")
     parser.add_argument("--fps", type=int, default=30, help="Playback frames per second")
@@ -264,7 +210,7 @@ def main():
         "--speed",
         type=float,
         default=1.0,
-        help="Playback speed multiplier in simulated seconds per real second",
+        help="Snapshot skip control (1=all snapshots, 2~one every 2 snapshots, etc.)",
     )
     parser.add_argument("--save", default=None, help="Optional output path, e.g. graphics/output/system1.gif")
     parser.add_argument("--dpi", type=int, default=120, help="Output DPI when saving")
