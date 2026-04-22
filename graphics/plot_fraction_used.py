@@ -32,7 +32,7 @@ from analysis_cache import group_entries_by_N, load_analysis_entries, load_analy
 from plot_style import apply_plot_style, get_distinct_series_styles
 
 
-DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+DISPLAY_PROFILE_N_VALUES = {100,150,200,250, 300,350,400,450, 500,550,600,650,700,750, 800}
 
 
 apply_plot_style()
@@ -44,16 +44,16 @@ MANUAL_T_EST_BY_N = {
     150: 300.0,
     200: 300.0,
     250: 400.0,
-    300: 400.0,
-    350: 500.0,
-    400: 500.0,
-    450: 600.0,
-    500: 750.0,
-    550: 700.0,
-    600: 700.0,
-    650: 800.0,
-    700: 800.0,
-    750: 900.0,
+    300: 450.0,
+    350: 600.0,
+    400: 650.0,
+    450: 750.0,
+    500: 850.0,
+    550: 900.0,
+    600: 1000.0,
+    650: 1100.0,
+    700: 1200.0,
+    750: 1300.0,
     800: 1550.0,
 }
 
