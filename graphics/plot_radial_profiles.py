@@ -757,9 +757,62 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
     """Save rho, |v| and J profiles in the same figure for multiple N."""
     os.makedirs(output_dir, exist_ok=True)
     N_values = sorted(profile_by_N.keys())
-    styles = get_distinct_series_styles(len(N_values))
     zoom_suffix = "" if zoom_range is None else "_zoom_S2_S5"
     outpath = os.path.join(output_dir, f"inciso_1_4_profiles_vs_S_by_N{zoom_suffix}.png")
+
+    if zoom_range is not None:
+        fig, ax = plt.subplots(figsize=(10, 7))
+        cmap = plt.get_cmap('viridis')
+        n_min = float(min(N_values))
+        n_max = float(max(N_values))
+        if np.isclose(n_min, n_max):
+            norm = matplotlib.colors.Normalize(vmin=n_min - 0.5, vmax=n_max + 0.5)
+        else:
+            norm = matplotlib.colors.Normalize(vmin=n_min, vmax=n_max)
+
+        y_limits = compute_zoom_y_limits(
+            profile_by_N,
+            "J_mean",
+            "J_err",
+            zoom_range[0],
+            zoom_range[1],
+        )
+
+        for N in N_values:
+            stats = profile_by_N[N]
+            S_centers = stats["S_centers"]
+            ax.errorbar(
+                S_centers,
+                stats["J_mean"],
+                yerr=stats["J_err"],
+                fmt='o-',
+                linewidth=1.8,
+                markersize=4.2,
+                capsize=2,
+                alpha=0.95,
+                color=cmap(norm(float(N))),
+            )
+
+        ax.set_xlabel('Distancia radial $S$ [m]', fontsize=16)
+        ax.set_ylabel(r'$J_{in}$ [particles/(m·s)]', color='black', fontsize=16)
+        ax.grid(True, alpha=0.25, linestyle='--')
+        ax.tick_params(axis='both', labelsize=13)
+        ax.set_xlim(zoom_range[0], zoom_range[1])
+        if y_limits is not None:
+            ax.set_ylim(y_limits[0], y_limits[1])
+
+        scalar_mappable = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+        scalar_mappable.set_array([])
+        colorbar = fig.colorbar(scalar_mappable, ax=ax, pad=0.02)
+        colorbar.set_label('Numero de particulas $N$', fontsize=13)
+        colorbar.ax.tick_params(labelsize=12)
+
+        fig.tight_layout()
+        fig.savefig(outpath, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        return outpath
+
+    styles = get_distinct_series_styles(len(N_values))
 
     fig, axes = plt.subplots(1, 3, figsize=(20, 7), sharex=True)
     labels = [
