@@ -32,6 +32,7 @@ from plot_style import apply_plot_style, get_distinct_series_styles, format_y_ax
 
 
 DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
+COMPARISON_PROFILE_N_VALUES = (100, 500, 800)
 NEAR_OBSTACLE_S_RANGE = (2.0, 3.0)
 ZOOM_S_RANGE = (2.0, 5.0)
 STATIONARY_ACCUMULATORS_CACHE = {}
@@ -626,7 +627,7 @@ def save_radial_profile_figures(
         J_values,
         j_outpath,
         'Distancia radial $S$ [m]',
-        r'$J_{in}$ [particles/(m·s)]',
+        r'$J_{in}$ [particulas/(m·s)]',
         fmt='D-',
         color='#BF360C',
         markerfacecolor='#FF5722',
@@ -701,7 +702,7 @@ def save_s2_vs_n_figures(
         J_values,
         j_outpath,
         'Número de partículas $N$',
-        r'$J_{in}$ [particles/(m·s)] en $S \in [2,3]$ m',
+        r'$J_{in}$ [particulas/(m·s)] en $S \in [2,3]$ m',
         fmt='D-',
         color='#BF360C',
         markerfacecolor='#FF5722',
@@ -795,7 +796,7 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
             )
 
         ax.set_xlabel('Distancia radial $S$ [m]', fontsize=16)
-        ax.set_ylabel(r'$J_{in}$ [particles/(m·s)]', color='black', fontsize=16)
+        ax.set_ylabel(r'$J_{in}$ [particulas/(m·s)]', color='black', fontsize=16)
         ax.grid(True, alpha=0.25, linestyle='--')
         ax.tick_params(axis='both', labelsize=13)
         ax.set_xlim(zoom_range[0], zoom_range[1])
@@ -820,7 +821,7 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
     labels = [
         (r'$\langle \rho_f^{in} \rangle$ [part/m$^2$]', "rho_mean", "rho_err", '#1B5E20'),
         (r'$|\langle v_f^{in} \rangle|$ [m/s]', "v_mean", "v_err", '#0D47A1'),
-        (r'$J_{in}$ [particles/(m·s)]', "J_mean", "J_err", '#BF360C'),
+        (r'$J_{in}$ [particulas/(m·s)]', "J_mean", "J_err", '#BF360C'),
     ]
 
     zoom_y_limits = [None, None, None]
@@ -880,6 +881,59 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
     return outpath
 
 
+def save_selected_n_profiles_separate_figures(profile_by_N, output_dir, selected_ns=COMPARISON_PROFILE_N_VALUES):
+    """Save one figure per observable comparing only the selected N values."""
+    os.makedirs(output_dir, exist_ok=True)
+    selected_data = {N: profile_by_N[N] for N in selected_ns if N in profile_by_N}
+    if not selected_data:
+        return []
+
+    styles = get_distinct_series_styles(len(selected_data))
+    series = [
+        ("rho", r'$\langle \rho_f^{in} \rangle$ [part/m$^2$]', "rho_mean", "rho_err", lambda y: y),
+        ("velocity", r'$|\langle v_f^{in} \rangle|$ [m/s]', "v_mean", "v_err", np.abs),
+        ("flux", r'$J_{in}$ [particulas/(m·s)]', "J_mean", "J_err", lambda y: y),
+    ]
+
+    outpaths = []
+    for observable_name, ylabel, mean_key, err_key, value_transform in series:
+        fig, ax = plt.subplots(figsize=(10, 7))
+        all_err = []
+        for style, (N, stats) in zip(styles, sorted(selected_data.items())):
+            x = np.asarray(stats["S_centers"], dtype=float)
+            y = value_transform(np.asarray(stats[mean_key], dtype=float))
+            yerr = np.asarray(stats[err_key], dtype=float)
+            all_err.append(yerr)
+            ax.errorbar(
+                x,
+                y,
+                yerr=yerr,
+                fmt=f'{style["marker"]}{style["linestyle"]}',
+                linewidth=2.0,
+                markersize=5.0,
+                capsize=3,
+                color=style["color"],
+                alpha=0.95,
+                label=f'N={N}',
+            )
+
+        ax.set_xlabel('Distancia radial $S$ [m]', fontsize=16)
+        ax.set_ylabel(ylabel, color='black', fontsize=16)
+        ax.grid(True, alpha=0.25, linestyle='--')
+        ax.tick_params(axis='both', labelsize=13)
+        merged_err = np.concatenate(all_err) if all_err else None
+        format_y_axis(ax, yerr=merged_err)
+        ax.legend(loc='best', fontsize=12)
+
+        fig.tight_layout()
+        outpath = os.path.join(output_dir, f"inciso_1_4_{observable_name}_profile_vs_S_N100_500_800.png")
+        fig.savefig(outpath, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        outpaths.append(outpath)
+
+    return outpaths
+
+
 def save_near_obstacle_vs_scanning_figure(N_values, J_fresh, J_fresh_err, J_scan, J_scan_err, output_dir):
     """Compare J_fresh^in near obstacle with scanning-rate J(N)."""
     os.makedirs(output_dir, exist_ok=True)
@@ -914,7 +968,7 @@ def save_near_obstacle_vs_scanning_figure(N_values, J_fresh, J_fresh_err, J_scan
     )
 
     ax_left.set_xlabel('Numero de particulas $N$', fontsize=17)
-    ax_left.set_ylabel(r'$J_{fresh}^{in}$ [particles/(m·s)]', color='#BF360C', fontsize=17)
+    ax_left.set_ylabel(r'$J_{fresh}^{in}$ [particulas/(m·s)]', color='#BF360C', fontsize=17)
     ax_right.set_ylabel(r'$\langle J \rangle$ [contactos/s]', color='#6A1B9A', fontsize=17)
     ax_left.set_xticks(N_values)
     ax_left.grid(True, alpha=0.3, linestyle='--')
@@ -1082,8 +1136,11 @@ def plot_profiles_comparison_by_N(files_by_N, output_dir="graphics/output", dS=0
     profile_by_N = collect_profiles_by_N(files_by_N, dS)
     full_path = save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None)
     zoom_path = save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=zoom_range)
+    selected_paths = save_selected_n_profiles_separate_figures(profile_by_N, output_dir)
     print(f"  [1.4] Saved: {full_path}")
     print(f"  [1.4] Saved: {zoom_path}")
+    for outpath in selected_paths:
+        print(f"  [1.4] Saved: {outpath}")
 
 
 def plot_near_obstacle_vs_scanning_rate(files_by_N, output_dir="graphics/output", dS=0.2, s_range=NEAR_OBSTACLE_S_RANGE):
