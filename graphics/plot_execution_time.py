@@ -233,7 +233,7 @@ def plot_execution_time(files_by_N=None, data_dir="data", output_dir="graphics/o
     )
 
     ax.set_xlabel('Número de partículas $N$', fontsize=17)
-    ax.set_ylabel('Tiempo de ejecución [ms] (escala log)', fontsize=17)
+    ax.set_ylabel('Tiempo de ejecución [ms]', fontsize=17)
     ax.set_yscale('log')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=14)
