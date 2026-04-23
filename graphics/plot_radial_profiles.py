@@ -627,7 +627,7 @@ def save_radial_profile_figures(
         J_values,
         j_outpath,
         'Distancia radial $S$ [m]',
-        r'$J_{in}$ [particles/(m*s)]',
+        r'$J_{in}$ [particles/(m·s)]',
         fmt='D-',
         color='#BF360C',
         markerfacecolor='#FF5722',
@@ -702,7 +702,7 @@ def save_s2_vs_n_figures(
         J_values,
         j_outpath,
         'Número de partículas $N$',
-        r'$J_{in}$ [particles/(m*s)] en $S \in [2,3]$ m',
+        r'$J_{in}$ [particles/(m·s)] en $S \in [2,3]$ m',
         fmt='D-',
         color='#BF360C',
         markerfacecolor='#FF5722',
@@ -765,7 +765,7 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
     labels = [
         (r'$\langle \rho_f^{in} \rangle$ [part/m$^2$]', "rho_mean", "rho_err", '#1B5E20'),
         (r'$|\langle v_f^{in} \rangle|$ [m/s]', "v_mean", "v_err", '#0D47A1'),
-        (r'$J_{in}$ [particles/(m*s)]', "J_mean", "J_err", '#BF360C'),
+        (r'$J_{in}$ [particles/(m·s)]', "J_mean", "J_err", '#BF360C'),
     ]
 
     zoom_y_limits = [None, None, None]
@@ -850,7 +850,7 @@ def save_near_obstacle_vs_scanning_figure(N_values, J_fresh, J_fresh_err, J_scan
     )
 
     ax_left.set_xlabel('Numero de particulas $N$', fontsize=17)
-    ax_left.set_ylabel(r'$J_{fresh}^{in}$ [particles/(m*s)]', color='#BF360C', fontsize=17)
+    ax_left.set_ylabel(r'$J_{fresh}^{in}$ [particles/(m·s)]', color='#BF360C', fontsize=17)
     ax_right.set_ylabel(r'$\langle J \rangle$ [contactos/s]', color='#6A1B9A', fontsize=17)
     ax_left.set_xticks(N_values)
     ax_left.grid(True, alpha=0.3, linestyle='--')
