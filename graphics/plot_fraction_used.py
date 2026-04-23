@@ -308,8 +308,7 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
 
     ax.set_xlabel('Tiempo $t$ [s]', fontsize=17)
     ax.set_ylabel('Fracción de partículas usadas $F_u(t)$', fontsize=17)
-    ax.legend(fontsize=12, loc='center left', bbox_to_anchor=(1.02, 0.5),
-              borderaxespad=0.0)
+    ax.legend(fontsize=12, loc='upper right')
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=14)
     ylim_samples = np.array([0.0, max_fu, f_est if f_est is not None else 0.0])
@@ -318,7 +317,7 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     ax.set_xlim(0.0, t_max)
     ax.yaxis.set_major_locator(MultipleLocator(ystep))
 
-    plt.tight_layout(rect=(0, 0, 0.88, 1))
+    plt.tight_layout()
     outpath = os.path.join(output_dir, f"inciso_1_3_fraction_used_N{N}.png")
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
     plt.close()
