@@ -221,14 +221,13 @@ def add_stationary_reference_lines(ax, N, entries_or_entry):
     """Draw manual t_est and data-driven F_est references when available."""
     t_est, f_est = get_stationary_values(entries_or_entry, N)
 
-
-    if f_est is not None:
-        ax.axhline(
-            f_est,
-            color="#D81B60",
-            linestyle=":",
-            linewidth=2.0,
-            label=rf"$F_{{est}}={f_est:.3g}$",
+    if t_est is not None:
+        ax.axvline(
+            t_est,
+            color="#FB8C00",
+            linestyle="--",
+            linewidth=1.8,
+            label=rf"$t_{{est}}={t_est:g}$",
         )
 
     return t_est, f_est
