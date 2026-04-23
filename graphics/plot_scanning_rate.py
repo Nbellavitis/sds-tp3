@@ -29,7 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
-from plot_style import apply_plot_style, get_distinct_series_styles
+from plot_style import apply_plot_style, get_distinct_series_styles, format_y_axis
 
 
 apply_plot_style()
@@ -235,8 +235,8 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
     ax.set_ylabel(r'Scanning rate $\langle J \rangle$ [contactos/s]', fontsize=17)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.tick_params(axis='both', labelsize=14)
-    ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
-    
+    format_y_axis(ax, yerr=J_errs)
+
     plt.tight_layout()
     outpath = os.path.join(output_dir, "inciso_1_2_scanning_rate.png")
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
@@ -294,6 +294,7 @@ def plot_scanning_rate(files_by_N=None, data_dir="data", output_dir="graphics/ou
     )
     ax2.grid(True, alpha=0.3, linestyle='--')
     ax2.tick_params(axis='both', labelsize=14)
+    format_y_axis(ax2)
 
     plt.tight_layout()
     outpath2 = os.path.join(output_dir, "inciso_1_2_cfc_curve.png")

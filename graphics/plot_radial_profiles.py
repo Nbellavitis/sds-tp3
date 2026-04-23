@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
 from plot_fraction_used import MANUAL_T_EST_BY_N
-from plot_style import apply_plot_style, get_distinct_series_styles
+from plot_style import apply_plot_style, get_distinct_series_styles, format_y_axis
 
 
 DISPLAY_PROFILE_N_VALUES = {100, 300, 500, 800}
@@ -561,8 +561,7 @@ def save_profile_plot(
     if xticks is not None:
         ax.set_xticks(xticks)
 
-    if scientific_y:
-        ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 3))
+    format_y_axis(ax, yerr=yerr)
 
     plt.tight_layout()
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
@@ -778,9 +777,11 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
             zoom_range[1],
         )
 
+        all_j_err = []
         for N in N_values:
             stats = profile_by_N[N]
             S_centers = stats["S_centers"]
+            all_j_err.append(np.asarray(stats["J_err"], dtype=float))
             ax.errorbar(
                 S_centers,
                 stats["J_mean"],
@@ -800,6 +801,7 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
         ax.set_xlim(zoom_range[0], zoom_range[1])
         if y_limits is not None:
             ax.set_ylim(y_limits[0], y_limits[1])
+        format_y_axis(ax, yerr=np.concatenate(all_j_err) if all_j_err else None)
 
         scalar_mappable = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
         scalar_mappable.set_array([])
@@ -850,6 +852,13 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
                 label=f'N={N}',
             )
 
+    yerr_by_axis = [[], [], []]
+    for N in N_values:
+        stats = profile_by_N[N]
+        yerr_by_axis[0].append(np.asarray(stats["rho_err"], dtype=float))
+        yerr_by_axis[1].append(np.asarray(stats["v_err"], dtype=float))
+        yerr_by_axis[2].append(np.asarray(stats["J_err"], dtype=float))
+
     for idx, (axis, (ylabel, _, _, _axis_color)) in enumerate(zip(axes, labels)):
         axis.set_xlabel('Distancia radial $S$ [m]', fontsize=16)
         axis.set_ylabel(ylabel, color='black', fontsize=16)
@@ -860,6 +869,8 @@ def save_profiles_by_n_figures(profile_by_N, output_dir, zoom_range=None):
             y_limits = zoom_y_limits[idx]
             if y_limits is not None:
                 axis.set_ylim(y_limits[0], y_limits[1])
+        merged_err = np.concatenate(yerr_by_axis[idx]) if yerr_by_axis[idx] else None
+        format_y_axis(axis, yerr=merged_err)
 
     handles, legends = axes[0].get_legend_handles_labels()
     fig.legend(handles, legends, loc='upper center', ncol=min(len(N_values), 6), fontsize=12)
@@ -909,6 +920,8 @@ def save_near_obstacle_vs_scanning_figure(N_values, J_fresh, J_fresh_err, J_scan
     ax_left.grid(True, alpha=0.3, linestyle='--')
     ax_left.tick_params(axis='both', labelsize=14)
     ax_right.tick_params(axis='both', labelsize=14)
+    format_y_axis(ax_left, yerr=J_fresh_err)
+    format_y_axis(ax_right, yerr=J_scan_err)
 
     handles = [left_line, right_line]
     labels = [h.get_label() for h in handles]

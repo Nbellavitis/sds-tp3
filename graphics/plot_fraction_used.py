@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
 from analysis_cache import group_entries_by_N, load_analysis_entries, load_analysis_file
-from plot_style import apply_plot_style, get_distinct_series_styles
+from plot_style import apply_plot_style, get_distinct_series_styles, format_y_axis
 
 
 DISPLAY_PROFILE_N_VALUES = {100,150,200,250, 300,350,400,450, 500,550,600,650,700,750, 800}
@@ -270,7 +270,8 @@ def plot_fraction_used(entry=None, filepath=None, output_dir="graphics/output"):
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(times[0], times[-1])
     ax.yaxis.set_major_locator(MultipleLocator(ystep))
-    
+    format_y_axis(ax)
+
     plt.tight_layout()
     outpath = os.path.join(output_dir, f"inciso_1_3_fraction_used_N{N}.png")
     plt.savefig(outpath, dpi=150, bbox_inches='tight')
@@ -316,6 +317,7 @@ def plot_fraction_used_realizations(entries, output_dir="graphics/output"):
     ax.set_ylim(ymin, ymax)
     ax.set_xlim(0.0, t_max)
     ax.yaxis.set_major_locator(MultipleLocator(ystep))
+    format_y_axis(ax)
 
     plt.tight_layout()
     outpath = os.path.join(output_dir, f"inciso_1_3_fraction_used_N{N}.png")
@@ -362,6 +364,7 @@ def plot_t_est_vs_N(files_by_N, output_dir="graphics/output"):
     ax.tick_params(axis='both', labelsize=14)
     ax.set_xticks(N_values)
     ax.set_ylim(bottom=0.0)
+    format_y_axis(ax)
 
     plt.tight_layout()
     outpath = os.path.join(output_dir, 'inciso_1_3_t_est_vs_N.png')
@@ -417,6 +420,7 @@ def plot_f_est_vs_N(files_by_N, output_dir="graphics/output"):
     ax.tick_params(axis='both', labelsize=14)
     ax.set_xticks(N_values)
     ax.set_ylim(bottom=0.0)
+    format_y_axis(ax, yerr=f_stds)
 
     plt.tight_layout()
     outpath = os.path.join(output_dir, 'inciso_1_3_fest_vs_N.png')
