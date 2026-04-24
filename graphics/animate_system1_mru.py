@@ -147,7 +147,7 @@ def animate(filepath, fps=30, speed=1.0, save_path=None, dpi=120):
     fig.patch.set_facecolor("white")
 
     enclosure = Circle((0.0, 0.0), R_enclosure, fill=False, edgecolor="black", linewidth=1.8)
-    obstacle = Circle((0.0, 0.0), r0, facecolor="#9E9E9E", edgecolor="black", linewidth=1.0)
+    obstacle = Circle((0.0, 0.0), r0, facecolor="black", edgecolor="black", linewidth=1.0)
     ax.add_patch(enclosure)
     ax.add_patch(obstacle)
 
